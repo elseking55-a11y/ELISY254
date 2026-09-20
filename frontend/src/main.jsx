@@ -1,1330 +1,440 @@
-import React, { useState } from "react";
-import { createRoot } from "react-dom/client";
+import { useEffect, useState } from "react";
 import "./styles.css";
 
-const bots = [
-  {
-    id: "elisy-engine",
-    name: "ELISY254 ENGINE",
-    description: "Built-in account-aware trading engine",
-    markets: "XAUUSD / Forex",
-    analysis: "ENGINE",
-    status: "Available"
-  }
+const API_URL = (
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:4000"
+).replace(/\/$/, "");
+
+const NAV_ITEMS = [
+  ["🏠", "Dashboard"],
+  ["🤖", "My Bot"],
+  ["⚡", "Auto Trade"],
+  ["📡", "Signals"],
+  ["✋", "Manual Trade"],
+  ["📊", "Analysis"],
+  ["🤖", "Available Bots"],
+  ["📰", "News"],
+  ["📜", "Trade History"],
+  ["💼", "Portfolio"],
+  ["⚙️", "Settings"]
 ];
 
 function App() {
-  const [page, setPage] = useState("home");
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [selectedBot, setSelectedBot] = useState(null);
+  const [screen, setScreen] = useState("splash");
+  const [key, setKey] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [userId, setUserId] = useState("");
+  const [activePage, setActivePage] = useState("Dashboard");
 
-  const [analysisMode, setAnalysisMode] = useState("ENGINE");
-  const [tradeMode, setTradeMode] = useState("AUTO");
+  useEffect(() => {
+    const savedUserId = sessionStorage.getItem("elisy254_user_id");
 
-  const [balance, setBalance] = useState("10.00");
-  const [symbol, setSymbol] = useState("XAUUSD");
+    if (savedUserId) {
+      setUserId(savedUserId);
+      setScreen("app");
+    }
+  }, []);
 
-  const [risk, setRisk] = useState("0.5");
-  const [maxTrades, setMaxTrades] = useState("1");
-  const [dailyLoss, setDailyLoss] = useState("2");
+  useEffect(() => {
+    if (screen === "splash") {
+      const timer = setTimeout(() => {
+        setScreen("key");
+      }, 2600);
 
-  const [botRunning, setBotRunning] = useState(false);
+      return () => clearTimeout(timer);
+    }
+  }, [screen]);
 
-  const [aiProvider, setAiProvider] = useState("ChatGPT");
-  const [aiConnected, setAiConnected] = useState(false);
+  async function unlock() {
+    const cleanKey = key.trim();
 
-  function enterPlatform() {
-    setLoggedIn(true);
-    setPage("dashboard");
-  }
-
-  function selectBot(bot) {
-    setSelectedBot(bot);
-    setPage("bot");
-  }
-
-  function startBot() {
-    if (!selectedBot) {
-      setPage("bots");
+    if (!cleanKey) {
+      setError("Enter your access key.");
       return;
     }
 
-    setBotRunning(true);
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/auth/key`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          key: cleanKey
+        })
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok || !data.userId) {
+        setError(data.message || "Invalid access key.");
+        setLoading(false);
+        return;
+      }
+
+      sessionStorage.setItem(
+        "elisy254_user_id",
+        data.userId
+      );
+
+      setUserId(data.userId);
+      setKey("");
+      setScreen("app");
+    } catch (err) {
+      setError(
+        "Cannot connect to ELISY254 server. Check the API connection."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function stopBot() {
-    setBotRunning(false);
+  function logout() {
+    sessionStorage.removeItem("elisy254_user_id");
+    setUserId("");
+    setScreen("key");
+    setActivePage("Dashboard");
   }
 
-  function connectAI() {
-    setAiConnected(true);
-  }
-
-  if (!loggedIn) {
+  if (screen === "splash") {
     return (
-      <div className="landing">
-        <div className="landingGlow glowOne"></div>
-        <div className="landingGlow glowTwo"></div>
+      <main className="splash-screen">
+        <div className="splash-glow" />
 
-        <nav className="topbar">
-          <div className="brand">
-            <span className="brandDot"></span>
-            ELISY254
+        <div className="splash-content">
+          <div className="brand-small">
+            🔵 ELISY254
           </div>
 
-          <button
-            className="navButton"
-            onClick={enterPlatform}
-          >
-            LOGIN
-          </button>
-        </nav>
+          <h1>WELCOME TO ELISY254</h1>
 
-        <main className="hero">
-          <div className="heroBadge">
-            <span>●</span> CLOUD TRADING PLATFORM
+          <div className="game-minded">
+            GAME MINDED
           </div>
 
-          <h1>
-            WELCOME TO
-            <br />
-            <strong>ELISY254</strong>
-          </h1>
-
-          <p className="tagline">
-            SHARP MINDED 🧠
-          </p>
-
-          <p className="heroText">
-            A modern cloud control platform for your
-            trading bots, analysis, signals and account
-            management.
-          </p>
-
-          <div className="heroActions">
-            <button
-              className="primaryButton"
-              onClick={enterPlatform}
-            >
-              GET STARTED
-            </button>
-
-            <button
-              className="secondaryButton"
-              onClick={() => {
-                setLoggedIn(true);
-                setPage("bots");
-              }}
-            >
-              VIEW BOTS
-            </button>
+          <div className="brain-image" aria-label="Big Brain">
+            🧠
           </div>
 
-          <div className="heroStats">
-            <div>
-              <strong>ENGINE</strong>
-              <span>Built-in analysis</span>
-            </div>
-
-            <div>
-              <strong>AI READY</strong>
-              <span>4 AI providers</span>
-            </div>
-
-            <div>
-              <strong>RISK</strong>
-              <span>Account aware</span>
-            </div>
+          <div className="big-brain">
+            BIG BRAIN
           </div>
-        </main>
 
-        <footer className="landingFooter">
-          ELISY254 CLOUD © 2026
-        </footer>
-      </div>
-    );
-  }
-
-  return (
-    <div className="appShell">
-      <aside className="sidebar">
-        <div className="sideBrand">
-          <span className="brandDot"></span>
-          <div>
-            <strong>ELISY254</strong>
-            <small>SHARP MINDED</small>
+          <div className="loading-dots">
+            <span />
+            <span />
+            <span />
           </div>
         </div>
-
-        <div className="mobileClose">
-          MENU
-        </div>
-
-        <nav className="sideNav">
-          <NavItem
-            icon="🏠"
-            label="Dashboard"
-            active={page === "dashboard"}
-            onClick={() => setPage("dashboard")}
-          />
-
-          <NavItem
-            icon="🤖"
-            label="My Bot"
-            active={page === "bot"}
-            onClick={() => setPage("bot")}
-          />
-
-          <NavItem
-            icon="⚡"
-            label="Auto Trade"
-            active={page === "auto"}
-            onClick={() => setPage("auto")}
-          />
-
-          <NavItem
-            icon="📡"
-            label="Signals"
-            active={page === "signals"}
-            onClick={() => setPage("signals")}
-          />
-
-          <NavItem
-            icon="✋"
-            label="Manual Trade"
-            active={page === "manual"}
-            onClick={() => setPage("manual")}
-          />
-
-          <NavItem
-            icon="📊"
-            label="Analysis"
-            active={page === "analysis"}
-            onClick={() => setPage("analysis")}
-          />
-
-          <NavItem
-            icon="🤖"
-            label="Available Bots"
-            active={page === "bots"}
-            onClick={() => setPage("bots")}
-          />
-
-          <NavItem
-            icon="📰"
-            label="News"
-            active={page === "news"}
-            onClick={() => setPage("news")}
-          />
-
-          <NavItem
-            icon="📜"
-            label="Trade History"
-            active={page === "history"}
-            onClick={() => setPage("history")}
-          />
-
-          <NavItem
-            icon="⚙️"
-            label="Settings"
-            active={page === "settings"}
-            onClick={() => setPage("settings")}
-          />
-        </nav>
-
-        <button
-          className="logoutButton"
-          onClick={() => {
-            setLoggedIn(false);
-            setBotRunning(false);
-            setPage("home");
-          }}
-        >
-          Log out
-        </button>
-      </aside>
-
-      <main className="mainContent">
-        <header className="dashboardHeader">
-          <div>
-            <div className="headerKicker">
-              ELISY254 CLOUD
-            </div>
-
-            <h2>
-              {pageTitle(page)}
-            </h2>
-          </div>
-
-          <div className="connection">
-            <span
-              className={
-                botRunning
-                  ? "statusDot online"
-                  : "statusDot"
-              }
-            ></span>
-
-            {botRunning
-              ? "BOT RUNNING"
-              : "MT5/API OFFLINE"}
-          </div>
-        </header>
-
-        {page === "dashboard" && (
-          <Dashboard
-            balance={balance}
-            symbol={symbol}
-            setSymbol={setSymbol}
-            selectedBot={selectedBot}
-            botRunning={botRunning}
-            startBot={startBot}
-            stopBot={stopBot}
-            analysisMode={analysisMode}
-            tradeMode={tradeMode}
-            setTradeMode={setTradeMode}
-            setAnalysisMode={setAnalysisMode}
-            setPage={setPage}
-          />
-        )}
-
-        {page === "bots" && (
-          <Bots
-            bots={bots}
-            selectBot={selectBot}
-            selectedBot={selectedBot}
-          />
-        )}
-
-        {page === "bot" && (
-          <BotPage
-            selectedBot={selectedBot}
-            botRunning={botRunning}
-            startBot={startBot}
-            stopBot={stopBot}
-            balance={balance}
-            symbol={symbol}
-            setSymbol={setSymbol}
-            risk={risk}
-            setRisk={setRisk}
-            maxTrades={maxTrades}
-            setMaxTrades={setMaxTrades}
-            dailyLoss={dailyLoss}
-            setDailyLoss={setDailyLoss}
-          />
-        )}
-
-        {page === "auto" && (
-          <AutoTrade
-            botRunning={botRunning}
-            startBot={startBot}
-            stopBot={stopBot}
-            balance={balance}
-            risk={risk}
-            maxTrades={maxTrades}
-          />
-        )}
-
-        {page === "signals" && (
-          <Signals symbol={symbol} />
-        )}
-
-        {page === "manual" && (
-          <ManualTrade symbol={symbol} />
-        )}
-
-        {page === "analysis" && (
-          <Analysis
-            analysisMode={analysisMode}
-            setAnalysisMode={setAnalysisMode}
-            aiProvider={aiProvider}
-            setAiProvider={setAiProvider}
-            aiConnected={aiConnected}
-            connectAI={connectAI}
-          />
-        )}
-
-        {page === "news" && <News />}
-
-        {page === "history" && (
-          <History />
-        )}
-
-        {page === "settings" && (
-          <Settings
-            balance={balance}
-            setBalance={setBalance}
-            symbol={symbol}
-            setSymbol={setSymbol}
-            risk={risk}
-            setRisk={setRisk}
-            maxTrades={maxTrades}
-            setMaxTrades={setMaxTrades}
-            dailyLoss={dailyLoss}
-            setDailyLoss={setDailyLoss}
-            analysisMode={analysisMode}
-            setAnalysisMode={setAnalysisMode}
-            tradeMode={tradeMode}
-            setTradeMode={setTradeMode}
-          />
-        )}
       </main>
-    </div>
-  );
-}
+    );
+  }
 
-function NavItem({
-  icon,
-  label,
-  active,
-  onClick
-}) {
-  return (
-    <button
-      className={`navItem ${active ? "active" : ""}`}
-      onClick={onClick}
-    >
-      <span>{icon}</span>
-      {label}
-    </button>
-  );
-}
-
-function Dashboard({
-  balance,
-  symbol,
-  setSymbol,
-  selectedBot,
-  botRunning,
-  startBot,
-  stopBot,
-  analysisMode,
-  tradeMode,
-  setTradeMode,
-  setAnalysisMode,
-  setPage
-}) {
-  return (
-    <div className="page">
-      <div className="accountGrid">
-        <Card
-          title="Balance"
-          value={`$${balance}`}
-          sub="Account balance"
-        />
-
-        <Card
-          title="Equity"
-          value={`$${balance}`}
-          sub="Current equity"
-        />
-
-        <Card
-          title="Broker"
-          value="Not connected"
-          sub="Connect MT5/API"
-        />
-
-        <Card
-          title="Open Trades"
-          value="0"
-          sub="0 active positions"
-        />
-      </div>
-
-      <div className="dashboardGrid">
-        <section className="panel botPanel">
-          <PanelTitle
-            title="ELISY254 ENGINE"
-            subtitle={
-              selectedBot
-                ? selectedBot.description
-                : "Built-in trading engine"
-            }
-          />
-
-          <div className="botStatus">
-            <span
-              className={
-                botRunning
-                  ? "bigStatus running"
-                  : "bigStatus"
-              }
-            >
-              {botRunning
-                ? "● RUNNING"
-                : "● STOPPED"}
-            </span>
-
-            <span className="badge">
-              {analysisMode}
-            </span>
-          </div>
-
-          <div className="controlRow">
-            <div>
-              <label>Symbol</label>
-              <select
-                value={symbol}
-                onChange={(e) =>
-                  setSymbol(e.target.value)
-                }
-              >
-                <option>XAUUSD</option>
-                <option>EURUSD</option>
-                <option>GBPUSD</option>
-                <option>USDJPY</option>
-              </select>
-            </div>
-
-            <div>
-              <label>Trading mode</label>
-              <select
-                value={tradeMode}
-                onChange={(e) =>
-                  setTradeMode(e.target.value)
-                }
-              >
-                <option value="AUTO">
-                  AUTO TRADE
-                </option>
-
-                <option value="SIGNAL">
-                  SIGNAL ONLY
-                </option>
-
-                <option value="MANUAL">
-                  MANUAL
-                </option>
-              </select>
-            </div>
-          </div>
-
-          <div className="modeButtons">
-            <button
-              className={
-                analysisMode === "ENGINE"
-                  ? "modeButton selected"
-                  : "modeButton"
-              }
-              onClick={() =>
-                setAnalysisMode("ENGINE")
-              }
-            >
-              ⚙️ ENGINE
-            </button>
-
-            <button
-              className={
-                analysisMode === "AI"
-                  ? "modeButton selected"
-                  : "modeButton"
-              }
-              onClick={() =>
-                setAnalysisMode("AI")
-              }
-            >
-              🧠 AI
-            </button>
-          </div>
-
-          <button
-            className={
-              botRunning
-                ? "stopButton"
-                : "startButton"
-            }
-            onClick={
-              botRunning
-                ? stopBot
-                : startBot
-            }
-          >
-            {botRunning
-              ? "■ STOP BOT"
-              : "▶ START BOT"}
-          </button>
-        </section>
-
-        <section className="panel">
-          <PanelTitle
-            title="Risk Control"
-            subtitle="Account-aware protection"
-          />
-
-          <RiskRow
-            label="Risk per trade"
-            value="0.5%"
-          />
-
-          <RiskRow
-            label="Maximum daily loss"
-            value="2%"
-          />
-
-          <RiskRow
-            label="Maximum open trades"
-            value="1"
-          />
-
-          <RiskRow
-            label="Martingale"
-            value="OFF"
-          />
-
-          <RiskRow
-            label="Loss recovery"
-            value="OFF"
-          />
-
-          <div className="warningBox">
-            Trades should be blocked when the
-            broker's minimum volume exceeds the
-            configured account risk.
-          </div>
-        </section>
-      </div>
-
-      <section className="panel">
-        <PanelTitle
-          title="Quick Access"
-          subtitle="Manage your trading platform"
-        />
-
-        <div className="quickGrid">
-          <QuickButton
-            icon="🤖"
-            title="Available Bots"
-            onClick={() => setPage("bots")}
-          />
-
-          <QuickButton
-            icon="📡"
-            title="Signals"
-            onClick={() => setPage("signals")}
-          />
-
-          <QuickButton
-            icon="📊"
-            title="Analysis"
-            onClick={() => setPage("analysis")}
-          />
-
-          <QuickButton
-            icon="⚙️"
-            title="Settings"
-            onClick={() => setPage("settings")}
-          />
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Bots({
-  bots,
-  selectBot,
-  selectedBot
-}) {
-  return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Available Bots"
-          subtitle="Bots published by ELISY254"
-        />
-
-        <div className="botCards">
-          {bots.map((bot) => (
-            <div
-              className="availableBot"
-              key={bot.id}
-            >
-              <div className="botIcon">
-                🤖
-              </div>
-
-              <div className="botInfo">
-                <h3>{bot.name}</h3>
-
-                <p>
-                  {bot.description}
-                </p>
-
-                <div className="tagList">
-                  <span>{bot.analysis}</span>
-                  <span>{bot.markets}</span>
-                  <span className="greenTag">
-                    {bot.status}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                className="primarySmall"
-                onClick={() =>
-                  selectBot(bot)
-                }
-              >
-                {selectedBot?.id === bot.id
-                  ? "SELECTED"
-                  : "SELECT"}
-              </button>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function BotPage({
-  selectedBot,
-  botRunning,
-  startBot,
-  stopBot,
-  balance,
-  symbol,
-  setSymbol,
-  risk,
-  setRisk,
-  maxTrades,
-  setMaxTrades,
-  dailyLoss,
-  setDailyLoss
-}) {
-  if (!selectedBot) {
+  if (screen === "key") {
     return (
-      <EmptyState
-        title="No bot selected"
-        text="Choose ELISY254 ENGINE from Available Bots."
-      />
+      <main className="key-screen">
+        <div className="key-background" />
+
+        <section className="key-card">
+          <div className="brand">
+            🔵 ELISY254
+          </div>
+
+          <div className="key-brain">🧠</div>
+
+          <h1>SHARP MINDED</h1>
+
+          <p className="key-subtitle">
+            Enter your private access key to open ELISY254.
+          </p>
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              unlock();
+            }}
+          >
+            <label htmlFor="access-key">
+              ACCESS KEY
+            </label>
+
+            <input
+              id="access-key"
+              type="password"
+              value={key}
+              onChange={(event) => {
+                setKey(event.target.value);
+                setError("");
+              }}
+              placeholder="Enter access key"
+              autoComplete="off"
+              spellCheck="false"
+              disabled={loading}
+            />
+
+            {error && (
+              <div className="error-box">
+                ⚠️ {error}
+              </div>
+            )}
+
+            <button
+              className="enter-button"
+              type="submit"
+              disabled={loading}
+            >
+              {loading
+                ? "VERIFYING..."
+                : "ENTER SHARP MINDED →"}
+            </button>
+          </form>
+
+          <div className="security-note">
+            🔐 Your key is verified by the ELISY254 server.
+          </div>
+        </section>
+      </main>
     );
   }
 
   return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title={selectedBot.name}
-          subtitle={selectedBot.description}
-        />
-
-        <div className="botHeader">
-          <div className="largeBotIcon">
-            🤖
-          </div>
-
-          <div>
-            <div className="onlineLabel">
-              ● AVAILABLE
-            </div>
-
-            <p>
-              Built-in account-aware engine.
-            </p>
-          </div>
+    <main className="app-shell">
+      <header className="top-header">
+        <div className="logo">
+          🔵 <span>ELISY254</span>
         </div>
 
-        <div className="settingsGrid">
-          <SettingInput
-            label="Account balance"
-            value={balance}
-            disabled
-          />
-
-          <div>
-            <label>Symbol</label>
-
-            <select
-              value={symbol}
-              onChange={(e) =>
-                setSymbol(e.target.value)
-              }
-            >
-              <option>XAUUSD</option>
-              <option>EURUSD</option>
-              <option>GBPUSD</option>
-              <option>USDJPY</option>
-            </select>
-          </div>
-
-          <SettingInput
-            label="Risk per trade %"
-            value={risk}
-            onChange={(e) =>
-              setRisk(e.target.value)
-            }
-          />
-
-          <SettingInput
-            label="Maximum open trades"
-            value={maxTrades}
-            onChange={(e) =>
-              setMaxTrades(e.target.value)
-            }
-          />
-
-          <SettingInput
-            label="Maximum daily loss %"
-            value={dailyLoss}
-            onChange={(e) =>
-              setDailyLoss(e.target.value)
-            }
-          />
-
-          <SettingInput
-            label="Martingale"
-            value="OFF"
-            disabled
-          />
-        </div>
-
-        <button
-          className={
-            botRunning
-              ? "stopButton"
-              : "startButton"
-          }
-          onClick={
-            botRunning
-              ? stopBot
-              : startBot
-          }
-        >
-          {botRunning
-            ? "■ STOP ELISY254"
-            : "▶ START ELISY254"}
-        </button>
-      </section>
-    </div>
-  );
-}
-
-function AutoTrade({
-  botRunning,
-  startBot,
-  stopBot,
-  balance,
-  risk,
-  maxTrades
-}) {
-  return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Auto Trade"
-          subtitle="Automatic trading control"
-        />
-
-        <div className="autoStatus">
-          <span
-            className={
-              botRunning
-                ? "bigStatus running"
-                : "bigStatus"
-            }
-          >
-            {botRunning
-              ? "● AUTO TRADE RUNNING"
-              : "● AUTO TRADE STOPPED"}
+        <div className="header-right">
+          <span className="connection">
+            🟢 SECURE
           </span>
+
+          <button
+            className="account-button"
+            onClick={logout}
+          >
+            👤 Account
+          </button>
         </div>
+      </header>
 
-        <div className="statsRow">
-          <Stat label="Balance" value={`$${balance}`} />
-          <Stat label="Risk" value={`${risk}%`} />
-          <Stat label="Max trades" value={maxTrades} />
-        </div>
+      <nav className="horizontal-nav">
+        {NAV_ITEMS.map(([icon, name]) => (
+          <button
+            key={name}
+            className={
+              activePage === name
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() => setActivePage(name)}
+          >
+            <span>{icon}</span>
+            <span>{name}</span>
+          </button>
+        ))}
+      </nav>
 
-        <div className="engineFlow">
-          <span>MARKET</span>
-          <b>→</b>
-          <span>ENGINE</span>
-          <b>→</b>
-          <span>RISK CHECK</span>
-          <b>→</b>
-          <span>MT5/API</span>
-        </div>
-
-        <button
-          className={
-            botRunning
-              ? "stopButton"
-              : "startButton"
-          }
-          onClick={
-            botRunning
-              ? stopBot
-              : startBot
-          }
-        >
-          {botRunning
-            ? "■ STOP AUTO TRADE"
-            : "▶ START AUTO TRADE"}
-        </button>
-      </section>
-    </div>
-  );
-}
-
-function Signals({ symbol }) {
-  return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Signals"
-          subtitle="Engine signals"
-        />
-
-        <div className="signalCard">
+      <section className="content">
+        <div className="page-title">
           <div>
-            <span className="signalSymbol">
-              {symbol}
+            <span className="eyebrow">
+              SHARP MINDED 😀 😎
             </span>
-
-            <h3>WAITING FOR VALID SETUP</h3>
-
-            <p>
-              No real trading signal is generated
-              by this frontend demo.
-            </p>
+            <h2>{activePage}</h2>
           </div>
 
-          <span className="badge">
-            ENGINE
+          <span className="live-badge">
+            🟢 LIVE PLATFORM
           </span>
         </div>
-      </section>
-    </div>
-  );
-}
 
-function ManualTrade({ symbol }) {
-  return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Manual Trade"
-          subtitle={`${symbol} order controls`}
-        />
-
-        <div className="manualGrid">
-          <button className="buyButton">
-            🟢 BUY
-          </button>
-
-          <button className="sellButton">
-            🔴 SELL
-          </button>
-        </div>
-
-        <div className="warningBox">
-          Real order placement will only be enabled
-          after the secure broker/API connection is
-          implemented.
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Analysis({
-  analysisMode,
-  setAnalysisMode,
-  aiProvider,
-  setAiProvider,
-  aiConnected,
-  connectAI
-}) {
-  return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Analysis"
-          subtitle="Choose your analysis engine"
-        />
-
-        <div className="modeButtons large">
-          <button
-            className={
-              analysisMode === "ENGINE"
-                ? "modeButton selected"
-                : "modeButton"
-            }
-            onClick={() =>
-              setAnalysisMode("ENGINE")
-            }
-          >
-            ⚙️ ENGINE
-            <small>
-              Built-in analysis
-            </small>
-          </button>
-
-          <button
-            className={
-              analysisMode === "AI"
-                ? "modeButton selected"
-                : "modeButton"
-            }
-            onClick={() =>
-              setAnalysisMode("AI")
-            }
-          >
-            🧠 AI
-            <small>
-              API required
-            </small>
-          </button>
-        </div>
-
-        {analysisMode === "ENGINE" && (
-          <div className="successBox">
-            ⚙️ ENGINE MODE ACTIVE
-            <br />
-            No AI API is required.
-          </div>
-        )}
-
-        {analysisMode === "AI" && (
-          <div className="aiBox">
-            <h3>🧠 AI ACCESS</h3>
-
-            <p>
-              AI providers require their own secure
-              backend API configuration.
-            </p>
-
-            <label>Provider</label>
-
-            <select
-              value={aiProvider}
-              onChange={(e) =>
-                setAiProvider(e.target.value)
-              }
-            >
-              <option>ChatGPT</option>
-              <option>Gemini</option>
-              <option>Cloud AI</option>
-              <option>DeepSeek</option>
-            </select>
-
-            <div className="apiStatus">
-              Status:{" "}
-              {aiConnected
-                ? "🟢 CONNECTED"
-                : "🔴 NOT CONNECTED"}
-            </div>
-
-            <button
-              className="primarySmall"
-              onClick={connectAI}
-            >
-              CONNECT AI
-            </button>
-          </div>
+        {activePage === "Dashboard" ? (
+          <Dashboard userId={userId} />
+        ) : (
+          <ComingPage title={activePage} />
         )}
       </section>
-    </div>
+    </main>
   );
 }
 
-function News() {
+function Dashboard({ userId }) {
   return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Market News"
-          subtitle="News feed will connect to the backend"
-        />
-
-        <div className="emptyContent">
-          📰 Market news
-          <p>
-            News integration will be connected
-            through the backend.
-          </p>
+    <>
+      <div className="account-grid">
+        <div className="dashboard-card">
+          <div className="card-label">
+            MT5 CONNECTION
+          </div>
+          <div className="card-value">
+            🔴 NOT CONNECTED
+          </div>
+          <div className="card-small">
+            Connect an MT5-compatible execution service
+            before live trading.
+          </div>
         </div>
-      </section>
-    </div>
-  );
-}
 
-function History() {
-  return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Trade History"
-          subtitle="Your trading activity"
-        />
-
-        <div className="emptyContent">
-          📜 No trades yet.
-          <p>
-            Real trade history will come from the
-            connected trading API.
-          </p>
+        <div className="dashboard-card">
+          <div className="card-label">
+            ACTIVE BOT
+          </div>
+          <div className="card-value">
+            ELISY254 ENGINE
+          </div>
+          <div className="card-small">
+            Status: STOPPED
+          </div>
         </div>
-      </section>
-    </div>
-  );
-}
 
-function Settings({
-  balance,
-  setBalance,
-  symbol,
-  setSymbol,
-  risk,
-  setRisk,
-  maxTrades,
-  setMaxTrades,
-  dailyLoss,
-  setDailyLoss,
-  analysisMode,
-  setAnalysisMode,
-  tradeMode,
-  setTradeMode
-}) {
-  return (
-    <div className="page">
-      <section className="panel">
-        <PanelTitle
-          title="Settings"
-          subtitle="Trading and account preferences"
-        />
+        <div className="dashboard-card">
+          <div className="card-label">
+            TRADING MODE
+          </div>
+          <div className="card-value">
+            AUTO TRADE
+          </div>
+          <div className="card-small">
+            Risk controls required before execution.
+          </div>
+        </div>
 
-        <div className="settingsGrid">
-          <SettingInput
-            label="Demo account balance"
-            value={balance}
-            onChange={(e) =>
-              setBalance(e.target.value)
-            }
-          />
+        <div className="dashboard-card">
+          <div className="card-label">
+            ANALYSIS
+          </div>
+          <div className="card-value">
+            ENGINE
+          </div>
+          <div className="card-small">
+            Built-in analysis mode.
+          </div>
+        </div>
+      </div>
 
+      <div className="main-panel">
+        <div className="panel-heading">
           <div>
-            <label>Symbol</label>
-
-            <select
-              value={symbol}
-              onChange={(e) =>
-                setSymbol(e.target.value)
-              }
-            >
-              <option>XAUUSD</option>
-              <option>EURUSD</option>
-              <option>GBPUSD</option>
-              <option>USDJPY</option>
-            </select>
+            <span className="panel-icon">🔐</span>
+            ACCOUNT RISK MANAGEMENT
           </div>
 
-          <SettingInput
-            label="Risk per trade %"
-            value={risk}
-            onChange={(e) =>
-              setRisk(e.target.value)
-            }
-          />
+          <span className="status-pill">
+            CONFIGURABLE
+          </span>
+        </div>
 
-          <SettingInput
-            label="Maximum daily loss %"
-            value={dailyLoss}
-            onChange={(e) =>
-              setDailyLoss(e.target.value)
-            }
+        <div className="risk-grid">
+          <RiskItem name="Martingale" />
+          <RiskItem name="Unlimited Recovery" />
+          <RiskItem
+            name="Maximum Daily Loss"
+            enabled
           />
-
-          <SettingInput
-            label="Maximum open trades"
-            value={maxTrades}
-            onChange={(e) =>
-              setMaxTrades(e.target.value)
-            }
+          <RiskItem
+            name="Stop Loss"
+            enabled
           />
+          <RiskItem
+            name="Trade-size Calculation"
+            enabled
+          />
+          <RiskItem
+            name="Margin Check"
+            enabled
+          />
+          <RiskItem
+            name="Maximum Positions"
+            enabled
+          />
+        </div>
 
+        <div className="risk-values">
           <div>
-            <label>Trading mode</label>
-
-            <select
-              value={tradeMode}
-              onChange={(e) =>
-                setTradeMode(e.target.value)
-              }
-            >
-              <option value="AUTO">
-                AUTO TRADE
-              </option>
-
-              <option value="SIGNAL">
-                SIGNAL ONLY
-              </option>
-
-              <option value="MANUAL">
-                MANUAL
-              </option>
-            </select>
+            <span>Risk Per Trade</span>
+            <strong>0.50%</strong>
           </div>
 
           <div>
-            <label>Analysis</label>
-
-            <select
-              value={analysisMode}
-              onChange={(e) =>
-                setAnalysisMode(e.target.value)
-              }
-            >
-              <option value="ENGINE">
-                ENGINE
-              </option>
-
-              <option value="AI">
-                AI
-              </option>
-            </select>
+            <span>Daily Loss Limit</span>
+            <strong>2.00%</strong>
           </div>
 
-          <SettingInput
-            label="Martingale"
-            value="OFF"
-            disabled
-          />
+          <div>
+            <span>Maximum Positions</span>
+            <strong>1</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="main-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="panel-icon">🧠</span>
+            ELISY254 ENGINE
+          </div>
         </div>
 
-        <div className="successBox">
-          🔐 API keys and broker credentials will
-          never be stored in this frontend.
+        <p className="panel-description">
+          Account-aware trading engine. Live order
+          execution remains blocked until a real MT5
+          connection is verified.
+        </p>
+
+        <div className="warning-box">
+          🔒 LIVE TRADING LOCKED — MT5 connection required.
         </div>
-      </section>
-    </div>
+      </div>
+
+      <div className="user-session">
+        Session: {userId || "authenticated"}
+      </div>
+    </>
   );
 }
 
-function Card({
-  title,
-  value,
-  sub
-}) {
+function RiskItem({ name, enabled = false }) {
   return (
-    <div className="accountCard">
-      <span>{title}</span>
-      <strong>{value}</strong>
-      <small>{sub}</small>
-    </div>
-  );
-}
+    <div className="risk-item">
+      <span>{name}</span>
 
-function PanelTitle({
-  title,
-  subtitle
-}) {
-  return (
-    <div className="panelTitle">
-      <div>
-        <h3>{title}</h3>
-        <p>{subtitle}</p>
+      <div
+        className={
+          enabled
+            ? "toggle on"
+            : "toggle"
+        }
+      >
+        <span />
+        <b>{enabled ? "ON" : "OFF"}</b>
       </div>
     </div>
   );
 }
 
-function RiskRow({
-  label,
-  value
-}) {
+function ComingPage({ title }) {
   return (
-    <div className="riskRow">
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className="empty-panel">
+      <div className="empty-icon">🔵</div>
+
+      <h3>{title}</h3>
+
+      <p>
+        This module is part of the ELISY254 CLOUD
+        architecture and will use real backend data.
+      </p>
+
+      <span>
+        No fake trading data is being generated.
+      </span>
     </div>
   );
 }
 
-function QuickButton({
-  icon,
-  title,
-  onClick
-}) {
-  return (
-    <button
-      className="quickButton"
-      onClick={onClick}
-    >
-      <span>{icon}</span>
-      {title}
-    </button>
-  );
-}
-
-function Stat({
-  label,
-  value
-}) {
-  return (
-    <div className="stat">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function SettingInput({
-  label,
-  value,
-  onChange,
-  disabled = false
-}) {
-  return (
-    <div>
-      <label>{label}</label>
-
-      <input
-        value={value}
-        onChange={onChange}
-        disabled={disabled}
-      />
-    </div>
-  );
-}
-
-function EmptyState({
-  title,
-  text
-}) {
-  return (
-    <div className="page">
-      <section className="panel emptyContent">
-        <h3>{title}</h3>
-        <p>{text}</p>
-      </section>
-    </div>
-  );
-}
-
-function pageTitle(page) {
-  const titles = {
-    dashboard: "Dashboard",
-    bot: "My Bot",
-    auto: "Auto Trade",
-    signals: "Signals",
-    manual: "Manual Trade",
-    analysis: "Analysis",
-    bots: "Available Bots",
-    news: "Market News",
-    history: "Trade History",
-    settings: "Settings"
-  };
-
-  return titles[page] || "Dashboard";
-}
-
-createRoot(
-  document.getElementById("root")
-).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+export default App;
