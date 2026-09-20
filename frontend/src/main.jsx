@@ -1,57 +1,35 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const API_URL = (
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:4000"
+  import.meta.env.VITE_API_URL || ""
 ).replace(/\/$/, "");
-
-const NAV_ITEMS = [
-  ["🏠", "Dashboard"],
-  ["🤖", "My Bot"],
-  ["⚡", "Auto Trade"],
-  ["📡", "Signals"],
-  ["✋", "Manual Trade"],
-  ["📊", "Analysis"],
-  ["🤖", "Available Bots"],
-  ["📰", "News"],
-  ["📜", "Trade History"],
-  ["💼", "Portfolio"],
-  ["⚙️", "Settings"]
-];
 
 function App() {
   const [screen, setScreen] = useState("splash");
-  const [key, setKey] = useState("");
-  const [error, setError] = useState("");
+  const [accessKey, setAccessKey] = useState("");
   const [loading, setLoading] = useState(false);
-  const [userId, setUserId] = useState("");
-  const [activePage, setActivePage] = useState("Dashboard");
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const savedUserId = sessionStorage.getItem("elisy254_user_id");
+    const timer = setTimeout(() => {
+      setScreen("landing");
+    }, 1800);
 
-    if (savedUserId) {
-      setUserId(savedUserId);
-      setScreen("app");
-    }
+    return () => clearTimeout(timer);
   }, []);
 
-  useEffect(() => {
-    if (screen === "splash") {
-      const timer = setTimeout(() => {
-        setScreen("key");
-      }, 2600);
+  async function enterPlatform() {
+    const key = accessKey.trim();
 
-      return () => clearTimeout(timer);
+    if (!key) {
+      setError("Enter your private access key.");
+      return;
     }
-  }, [screen]);
 
-  async function unlock() {
-    const cleanKey = key.trim();
-
-    if (!cleanKey) {
-      setError("Enter your access key.");
+    if (!API_URL) {
+      setError("Backend address is not configured.");
       return;
     }
 
@@ -59,382 +37,321 @@ function App() {
     setError("");
 
     try {
-      const response = await fetch(`${API_URL}/api/auth/key`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          key: cleanKey
-        })
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok || !data.ok || !data.userId) {
-        setError(data.message || "Invalid access key.");
-        setLoading(false);
-        return;
-      }
-
-      sessionStorage.setItem(
-        "elisy254_user_id",
-        data.userId
+      const response = await fetch(
+        `${API_URL}/api/auth/key`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            key
+          })
+        }
       );
 
-      setUserId(data.userId);
-      setKey("");
-      setScreen("app");
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(
+          data.message || "Access verification failed."
+        );
+      }
+
+      if (data.token) {
+        sessionStorage.setItem(
+          "elisy_token",
+          data.token
+        );
+      }
+
+      if (data.user?.id) {
+        sessionStorage.setItem(
+          "elisy_user_id",
+          data.user.id
+        );
+      }
+
+      setScreen("dashboard");
     } catch (err) {
       setError(
-        "Cannot connect to ELISY254 server. Check the API connection."
+        err.message ||
+        "Backend is currently unavailable. Please try again."
       );
     } finally {
       setLoading(false);
     }
   }
 
-  function logout() {
-    sessionStorage.removeItem("elisy254_user_id");
-    setUserId("");
-    setScreen("key");
-    setActivePage("Dashboard");
-  }
-
   if (screen === "splash") {
     return (
-      <main className="splash-screen">
-        <div className="splash-glow" />
+      <div className="splash">
+        <div className="brain">🧠</div>
 
-        <div className="splash-content">
-          <div className="brand-small">
-            🔵 ELISY254
-          </div>
+        <h1>WELCOME TO ELISY254</h1>
 
-          <h1>WELCOME TO ELISY254</h1>
+        <p>GAME MINDED</p>
 
-          <div className="game-minded">
-            GAME MINDED
-          </div>
-
-          <div className="brain-image" aria-label="Big Brain">
-            🧠
-          </div>
-
-          <div className="big-brain">
-            BIG BRAIN
-          </div>
-
-          <div className="loading-dots">
-            <span />
-            <span />
-            <span />
-          </div>
+        <div className="loading-line">
+          <span />
         </div>
-      </main>
+      </div>
     );
   }
 
-  if (screen === "key") {
+  if (screen === "landing") {
     return (
-      <main className="key-screen">
-        <div className="key-background" />
-
-        <section className="key-card">
-          <div className="brand">
-            🔵 ELISY254
+      <main className="landing">
+        <nav className="landing-nav">
+          <div className="logo">
+            ELISY254 <span>CLOUD</span>
           </div>
 
-          <div className="key-brain">🧠</div>
+          <div className="nav-status">
+            ● CLOUD PLATFORM
+          </div>
+        </nav>
 
-          <h1>SHARP MINDED</h1>
+        <section className="hero">
+          <div className="hero-content">
+            <div className="brain-large">🧠</div>
 
-          <p className="key-subtitle">
-            Enter your private access key to open ELISY254.
-          </p>
+            <p className="eyebrow">
+              SHARP MINDED
+            </p>
 
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              unlock();
-            }}
-          >
-            <label htmlFor="access-key">
-              ACCESS KEY
-            </label>
+            <h1>
+              TRADE SMART.
+              <br />
+              CONTROL YOUR RISK.
+            </h1>
 
-            <input
-              id="access-key"
-              type="password"
-              value={key}
-              onChange={(event) => {
-                setKey(event.target.value);
-                setError("");
-              }}
-              placeholder="Enter access key"
-              autoComplete="off"
-              spellCheck="false"
-              disabled={loading}
-            />
+            <p className="hero-text">
+              ELISY254 CLOUD connects your trading
+              dashboard to your configured MT5
+              infrastructure.
+            </p>
 
-            {error && (
-              <div className="error-box">
-                ⚠️ {error}
+            <div className="access-box">
+              <label>
+                PRIVATE ACCESS
+              </label>
+
+              <input
+                type="password"
+                value={accessKey}
+                onChange={(e) =>
+                  setAccessKey(e.target.value)
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    enterPlatform();
+                  }
+                }}
+                placeholder="Enter access key"
+                autoComplete="off"
+              />
+
+              <button
+                onClick={enterPlatform}
+                disabled={loading}
+              >
+                {loading
+                  ? "CONNECTING..."
+                  : "ENTER ELISY254 →"}
+              </button>
+
+              {error && (
+                <div className="error">
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="hero-panel">
+            <div className="panel-glow" />
+
+            <div className="terminal-card">
+              <div className="terminal-top">
+                <span>ELISY254 ENGINE</span>
+                <span className="offline">
+                  ● STANDBY
+                </span>
               </div>
-            )}
 
-            <button
-              className="enter-button"
-              type="submit"
-              disabled={loading}
-            >
-              {loading
-                ? "VERIFYING..."
-                : "ENTER SHARP MINDED →"}
-            </button>
-          </form>
+              <div className="terminal-body">
+                <div>
+                  <small>MT5</small>
+                  <strong>WAITING</strong>
+                </div>
 
-          <div className="security-note">
-            🔐 Your key is verified by the ELISY254 server.
+                <div>
+                  <small>ANALYSIS</small>
+                  <strong>ENGINE</strong>
+                </div>
+
+                <div>
+                  <small>RISK</small>
+                  <strong>PROTECTED</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="features">
+          <div>
+            🤖
+            <strong>ENGINE</strong>
+            <span>Built-in market analysis</span>
+          </div>
+
+          <div>
+            📊
+            <strong>ANALYSIS</strong>
+            <span>Engine or AI modes</span>
+          </div>
+
+          <div>
+            🛡️
+            <strong>RISK CONTROL</strong>
+            <span>Account-aware protection</span>
+          </div>
+
+          <div>
+            📡
+            <strong>MT5 CLOUD</strong>
+            <span>Cloud connection</span>
           </div>
         </section>
       </main>
     );
   }
 
+  if (screen === "dashboard") {
+    return <Dashboard />;
+  }
+
+  return null;
+}
+
+function Dashboard() {
   return (
-    <main className="app-shell">
-      <header className="top-header">
+    <main className="app">
+      <header className="app-header">
         <div className="logo">
-          🔵 <span>ELISY254</span>
+          ELISY254 <span>CLOUD</span>
         </div>
 
-        <div className="header-right">
-          <span className="connection">
-            🟢 SECURE
-          </span>
-
-          <button
-            className="account-button"
-            onClick={logout}
-          >
-            👤 Account
-          </button>
+        <div className="connection">
+          <span>●</span>
+          MT5 NOT CONNECTED
         </div>
       </header>
 
-      <nav className="horizontal-nav">
-        {NAV_ITEMS.map(([icon, name]) => (
-          <button
-            key={name}
-            className={
-              activePage === name
-                ? "nav-item active"
-                : "nav-item"
-            }
-            onClick={() => setActivePage(name)}
-          >
-            <span>{icon}</span>
-            <span>{name}</span>
+      <nav className="top-nav">
+        {[
+          "🏠 Dashboard",
+          "🤖 My Bot",
+          "⚡ Auto Trade",
+          "📡 Signals",
+          "✋ Manual Trade",
+          "📊 Analysis",
+          "🤖 Available Bots",
+          "📰 News",
+          "📜 Trade History",
+          "💼 Portfolio",
+          "⚙️ Settings"
+        ].map((item) => (
+          <button key={item}>
+            {item}
           </button>
         ))}
       </nav>
 
-      <section className="content">
-        <div className="page-title">
-          <div>
-            <span className="eyebrow">
-              SHARP MINDED 😀 😎
-            </span>
-            <h2>{activePage}</h2>
-          </div>
-
-          <span className="live-badge">
-            🟢 LIVE PLATFORM
+      <section className="dashboard">
+        <div className="welcome">
+          <p>ELISY254 CLOUD</p>
+          <h1>Dashboard</h1>
+          <span>
+            Connect your MT5 account to begin.
           </span>
         </div>
 
-        {activePage === "Dashboard" ? (
-          <Dashboard userId={userId} />
-        ) : (
-          <ComingPage title={activePage} />
-        )}
+        <div className="cards">
+          <Card
+            title="Balance"
+            value="—"
+            label="Waiting for MT5"
+          />
+
+          <Card
+            title="Equity"
+            value="—"
+            label="Waiting for MT5"
+          />
+
+          <Card
+            title="Free Margin"
+            value="—"
+            label="Waiting for MT5"
+          />
+
+          <Card
+            title="Margin Level"
+            value="—"
+            label="Waiting for MT5"
+          />
+        </div>
+
+        <div className="status-grid">
+          <div className="status-card">
+            <h3>MT5 CONNECTION</h3>
+            <strong>NOT CONNECTED</strong>
+            <p>
+              No trading action is available until
+              a real MT5 connection is verified.
+            </p>
+          </div>
+
+          <div className="status-card">
+            <h3>TRADING MODE</h3>
+            <strong>MANUAL</strong>
+            <p>
+              Automatic trading remains disabled
+              until the account and risk checks pass.
+            </p>
+          </div>
+
+          <div className="status-card">
+            <h3>ANALYSIS MODE</h3>
+            <strong>ENGINE</strong>
+            <p>
+              Built-in analysis does not require an
+              external AI API.
+            </p>
+          </div>
+        </div>
       </section>
     </main>
   );
 }
 
-function Dashboard({ userId }) {
+function Card({ title, value, label }) {
   return (
-    <>
-      <div className="account-grid">
-        <div className="dashboard-card">
-          <div className="card-label">
-            MT5 CONNECTION
-          </div>
-          <div className="card-value">
-            🔴 NOT CONNECTED
-          </div>
-          <div className="card-small">
-            Connect an MT5-compatible execution service
-            before live trading.
-          </div>
-        </div>
-
-        <div className="dashboard-card">
-          <div className="card-label">
-            ACTIVE BOT
-          </div>
-          <div className="card-value">
-            ELISY254 ENGINE
-          </div>
-          <div className="card-small">
-            Status: STOPPED
-          </div>
-        </div>
-
-        <div className="dashboard-card">
-          <div className="card-label">
-            TRADING MODE
-          </div>
-          <div className="card-value">
-            AUTO TRADE
-          </div>
-          <div className="card-small">
-            Risk controls required before execution.
-          </div>
-        </div>
-
-        <div className="dashboard-card">
-          <div className="card-label">
-            ANALYSIS
-          </div>
-          <div className="card-value">
-            ENGINE
-          </div>
-          <div className="card-small">
-            Built-in analysis mode.
-          </div>
-        </div>
-      </div>
-
-      <div className="main-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-icon">🔐</span>
-            ACCOUNT RISK MANAGEMENT
-          </div>
-
-          <span className="status-pill">
-            CONFIGURABLE
-          </span>
-        </div>
-
-        <div className="risk-grid">
-          <RiskItem name="Martingale" />
-          <RiskItem name="Unlimited Recovery" />
-          <RiskItem
-            name="Maximum Daily Loss"
-            enabled
-          />
-          <RiskItem
-            name="Stop Loss"
-            enabled
-          />
-          <RiskItem
-            name="Trade-size Calculation"
-            enabled
-          />
-          <RiskItem
-            name="Margin Check"
-            enabled
-          />
-          <RiskItem
-            name="Maximum Positions"
-            enabled
-          />
-        </div>
-
-        <div className="risk-values">
-          <div>
-            <span>Risk Per Trade</span>
-            <strong>0.50%</strong>
-          </div>
-
-          <div>
-            <span>Daily Loss Limit</span>
-            <strong>2.00%</strong>
-          </div>
-
-          <div>
-            <span>Maximum Positions</span>
-            <strong>1</strong>
-          </div>
-        </div>
-      </div>
-
-      <div className="main-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-icon">🧠</span>
-            ELISY254 ENGINE
-          </div>
-        </div>
-
-        <p className="panel-description">
-          Account-aware trading engine. Live order
-          execution remains blocked until a real MT5
-          connection is verified.
-        </p>
-
-        <div className="warning-box">
-          🔒 LIVE TRADING LOCKED — MT5 connection required.
-        </div>
-      </div>
-
-      <div className="user-session">
-        Session: {userId || "authenticated"}
-      </div>
-    </>
-  );
-}
-
-function RiskItem({ name, enabled = false }) {
-  return (
-    <div className="risk-item">
-      <span>{name}</span>
-
-      <div
-        className={
-          enabled
-            ? "toggle on"
-            : "toggle"
-        }
-      >
-        <span />
-        <b>{enabled ? "ON" : "OFF"}</b>
-      </div>
+    <div className="card">
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{label}</small>
     </div>
   );
 }
 
-function ComingPage({ title }) {
-  return (
-    <div className="empty-panel">
-      <div className="empty-icon">🔵</div>
-
-      <h3>{title}</h3>
-
-      <p>
-        This module is part of the ELISY254 CLOUD
-        architecture and will use real backend data.
-      </p>
-
-      <span>
-        No fake trading data is being generated.
-      </span>
-    </div>
-  );
-}
-
-export default App;
+createRoot(
+  document.getElementById("root")
+).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
