@@ -2,14 +2,28 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
+/*
+  ELISY254 CLOUD
+  Frontend
+  Vercel → Render backend
+
+  Important:
+  - No fake MT5 balances.
+  - No fake broker connection.
+  - Live trading remains controlled by backend TRADING_ENABLED.
+  - Bot files/images currently use URLs because the backend does not
+    yet have object-storage/multipart upload.
+*/
+
 const API_URL =
-  import.meta.env.VITE_API_URL ||
-  "https://elisy254-sharp-mvfi.onrender.com";
+  (import.meta.env.VITE_API_URL || "https://elisy254-sharp-mvfi.onrender.com")
+    .replace(/\/+$/, "");
 
 const USER_TOKEN_KEY = "elisy254_user_token";
 const ADMIN_TOKEN_KEY = "elisy254_admin_token";
+const SELECTED_BOT_KEY = "elisy254_selected_bot";
 
-const NAV_ITEMS = [
+const USER_NAV = [
   ["🏠", "Dashboard"],
   ["🤖", "My Bot"],
   ["⚡", "Auto Trade"],
@@ -23,902 +37,371 @@ const NAV_ITEMS = [
   ["⚙️", "Settings"],
 ];
 
-const ADMIN_NAV_ITEMS = [
+const ADMIN_NAV = [
   ["🏠", "Dashboard"],
-  ["👥", "Users"],
   ["🤖", "Bot Management"],
-  ["📡", "MT5 Accounts"],
-  ["⚡", "Trading Activity"],
-  ["📊", "Analysis / AI"],
+  ["👥", "Users"],
+  ["💳", "MT5 Accounts"],
+  ["📊", "Trading Activity"],
+  ["🧠", "Analysis / AI"],
   ["🔑", "Access Keys"],
   ["🛡️", "Risk Controls"],
-  ["💰", "Portfolio / Accounts"],
+  ["💼", "Portfolio / Accounts"],
   ["📜", "Trade History"],
   ["📰", "News"],
   ["⚙️", "System Settings"],
   ["🔐", "Admin Security"],
 ];
 
-async function apiRequest(path, options = {}, token = null) {
-  const headers = {
-    "Content-Type": "application/json",
-    ...(options.headers || {}),
+function getUserToken() {
+  return localStorage.getItem(USER_TOKEN_KEY);
+}
+
+function getAdminToken() {
+  return localStorage.getItem(ADMIN_TOKEN_KEY);
+}
+
+function saveUserToken(token) {
+  if (token) localStorage.setItem(USER_TOKEN_KEY, token);
+}
+
+function saveAdminToken(token) {
+  if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
+}
+
+function clearUserToken() {
+  localStorage.removeItem(USER_TOKEN_KEY);
+}
+
+function clearAdminToken() {
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+function getStoredBot() {
+  try {
+    return JSON.parse(localStorage.getItem(SELECTED_BOT_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveSelectedBot(bot) {
+  if (bot) {
+    localStorage.setItem(SELECTED_BOT_KEY, JSON.stringify(bot));
+  } else {
+    localStorage.removeItem(SELECTED_BOT_KEY);
+  }
+}
+
+async function apiRequest(path, options = {}) {
+  const {
+    method = "GET",
+    body,
+    token,
+    admin = false,
+    headers = {},
+  } = options;
+
+  const finalHeaders = {
+    Accept: "application/json",
+    ...headers,
   };
 
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined) {
+    finalHeaders["Content-Type"] = "application/json";
+  }
+
+  const authToken = token || (admin ? getAdminToken() : getUserToken());
+
+  if (authToken) {
+    finalHeaders.Authorization = `Bearer ${authToken}`;
   }
 
   const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
+    method,
+    headers: finalHeaders,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
-  let data = null;
+  const contentType = response.headers.get("content-type") || "";
 
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
+  let data;
+
+  if (contentType.includes("application/json")) {
+    data = await response.json().catch(() => ({}));
+  } else {
+    data = await response.text().catch(() => "");
   }
 
   if (!response.ok) {
-    throw new Error(
-      data?.message ||
-        data?.error ||
-        `Request failed with status ${response.status}`
-    );
+    const message =
+      typeof data === "object"
+        ? data.message || data.error || `Request failed (${response.status})`
+        : data || `Request failed (${response.status})`;
+
+    throw new Error(message);
   }
 
   return data;
 }
 
-function formatNumber(value) {
-  if (value === null || value === undefined || value === "") return "—";
+function firstArray(data, keys = []) {
+  if (Array.isArray(data)) return data;
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key];
+    if (Array.isArray(data?.data?.[key])) return data.data[key];
+  }
+
+  if (Array.isArray(data?.data)) return data.data;
+
+  return [];
+}
+
+function unwrapData(data) {
+  if (data?.data && typeof data.data === "object") {
+    return data.data;
+  }
+
+  return data;
+}
+
+function formatMoney(value, currency = "USD") {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
 
   const number = Number(value);
 
-  if (!Number.isFinite(number)) return String(value);
+  if (!Number.isFinite(number)) {
+    return String(value);
+  }
 
-  return number.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
     maximumFractionDigits: 2,
-  });
+  }).format(number);
 }
 
-function maskAccount(account) {
-  if (!account) return "—";
+function formatDate(value) {
+  if (!value) return "—";
 
-  const value = String(account);
+  const date = new Date(value);
 
-  if (value.length <= 4) return "••••";
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
 
-  return `${"•".repeat(Math.max(0, value.length - 4))}${value.slice(-4)}`;
+  return date.toLocaleString();
 }
 
-function StatusDot({ online = false }) {
+function statusClass(status) {
+  const value = String(status || "").toLowerCase();
+
+  if (
+    value.includes("connected") ||
+    value.includes("online") ||
+    value.includes("published") ||
+    value.includes("success") ||
+    value === "true"
+  ) {
+    return "status-online";
+  }
+
+  if (
+    value.includes("offline") ||
+    value.includes("disabled") ||
+    value.includes("failed") ||
+    value.includes("error")
+  ) {
+    return "status-offline";
+  }
+
+  return "status-warning";
+}
+
+function StatusPill({ status, children }) {
   return (
-    <span className={`status-dot ${online ? "online" : "offline"}`}>
-      <span />
+    <span className={`pill ${statusClass(status)}`}>
+      {children || status || "UNKNOWN"}
     </span>
   );
 }
 
-function PageTitle({ icon, title, description }) {
-  return (
-    <div className="page-title">
-      <div>
-        <div className="eyebrow">{icon} ELISY254 CLOUD</div>
-        <h1>{title}</h1>
-        {description && <p>{description}</p>}
-      </div>
-    </div>
-  );
+function Loading({ text = "Loading..." }) {
+  return <div className="info-box">⏳ {text}</div>;
 }
 
-function InfoCard({ title, value, label, icon, status }) {
-  return (
-    <div className="info-card">
-      <div className="info-card-top">
-        <span className="info-icon">{icon}</span>
-        {status !== undefined && <StatusDot online={status} />}
-      </div>
+function ErrorBox({ message }) {
+  if (!message) return null;
 
-      <div className="info-card-title">{title}</div>
-
-      <div className="info-card-value">{value}</div>
-
-      {label && <div className="info-card-label">{label}</div>}
-    </div>
-  );
+  return <div className="error-box">⚠️ {message}</div>;
 }
 
-function StateRow({ label, value, status }) {
-  return (
-    <div className="state-row">
-      <span>{label}</span>
-
-      <strong className={status ? "state-online" : ""}>
-        {status !== undefined && (
-          <StatusDot online={status} />
-        )}
-        {value}
-      </strong>
-    </div>
-  );
-}
-
-/* =========================================================
-   SPLASH
-========================================================= */
-
-function Splash({ onFinish }) {
-  useEffect(() => {
-    const timer = setTimeout(onFinish, 1800);
-
-    return () => clearTimeout(timer);
-  }, [onFinish]);
-
-  return (
-    <div className="splash-screen">
-      <div className="splash-brain">🧠</div>
-
-      <h1>WELCOME TO ELISY254</h1>
-
-      <p>GAME MINDED</p>
-
-      <div className="splash-loader">
-        <span />
-        <span />
-        <span />
-      </div>
-    </div>
-  );
+function EmptyBox({ children = "No data available." }) {
+  return <div className="info-box">ℹ️ {children}</div>;
 }
 
 /* =========================================================
    LANDING
 ========================================================= */
 
-function Landing({ onLogin }) {
+function LandingScreen({ onUserLogin, onAdminLogin }) {
   const [accessKey, setAccessKey] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [stage, setStage] = useState(0);
 
-  async function submit(event) {
-    event.preventDefault();
+  useEffect(() => {
+    const timer1 = setTimeout(() => setStage(1), 900);
+    const timer2 = setTimeout(() => setStage(2), 1800);
+
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, []);
+
+  async function handleLogin(e) {
+    e.preventDefault();
+
+    setError("");
 
     if (!accessKey.trim()) {
-      setError("Enter your private access key.");
+      setError(adminMode ? "Enter the admin email/password." : "Enter your access key.");
       return;
     }
 
-    setLoading(true);
-    setError("");
+    setBusy(true);
 
     try {
-      const result = await apiRequest("/api/auth/key", {
-        method: "POST",
-        body: JSON.stringify({
-          accessKey: accessKey.trim(),
-        }),
-      });
+      if (adminMode) {
+        const parts = accessKey.split("|");
 
-      if (!result?.token) {
-        throw new Error("Access service did not return a valid session.");
+        if (parts.length < 2) {
+          throw new Error(
+            "For admin login enter: ADMIN_EMAIL|ADMIN_PASSWORD"
+          );
+        }
+
+        const result = await apiRequest("/api/admin/login", {
+          method: "POST",
+          body: {
+            email: parts[0].trim(),
+            password: parts.slice(1).join("|").trim(),
+          },
+        });
+
+        const token = result?.token || result?.data?.token;
+
+        if (!token) {
+          throw new Error("Admin login succeeded but no token was returned.");
+        }
+
+        saveAdminToken(token);
+        onAdminLogin();
+      } else {
+        const result = await apiRequest("/api/auth/key", {
+          method: "POST",
+          body: {
+            accessKey: accessKey.trim(),
+            access_key: accessKey.trim(),
+            key: accessKey.trim(),
+          },
+        });
+
+        const token = result?.token || result?.data?.token;
+
+        if (!token) {
+          throw new Error("Login succeeded but no user token was returned.");
+        }
+
+        saveUserToken(token);
+        onUserLogin();
       }
-
-      sessionStorage.setItem(USER_TOKEN_KEY, result.token);
-
-      onLogin(result);
     } catch (err) {
-      setError(
-        err.message ||
-          "The access service is temporarily unavailable."
-      );
+      setError(err.message || "Login failed.");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
     <main className="landing-page">
-      <div className="landing-glow glow-one" />
-      <div className="landing-glow glow-two" />
+      <div className="landing-card">
+        {stage === 0 && (
+          <>
+            <div className="brain-logo">🧠</div>
+            <h1>WELCOME TO ELISY254</h1>
+            <p>GAME MINDED</p>
+          </>
+        )}
 
-      <section className="landing-card">
-        <div className="landing-brain">🧠</div>
+        {stage === 1 && (
+          <>
+            <div className="brain-logo">🧠</div>
+            <h1>SHARP MINDED 😀 😎</h1>
+            <p>ELISY254 CLOUD</p>
+          </>
+        )}
 
-        <div className="landing-badge">
-          <StatusDot online={true} />
-          CLOUD PLATFORM
-        </div>
+        {stage >= 2 && (
+          <>
+            <div className="brain-logo small">🧠</div>
 
-        <h1>WELCOME TO ELISY254</h1>
+            <h1>ELISY254 CLOUD</h1>
 
-        <h2>
-          SHARP MINDED <span>😀 😎</span>
-        </h2>
+            <p className="landing-subtitle">
+              Professional MT5 trading control platform
+            </p>
 
-        <p className="landing-description">
-          Private cloud trading platform with MT5 connectivity,
-          analysis tools, bots and risk controls.
-        </p>
-
-        <form onSubmit={submit} className="access-form">
-          <label>PRIVATE ACCESS KEY</label>
-
-          <input
-            type="password"
-            value={accessKey}
-            onChange={(event) => setAccessKey(event.target.value)}
-            placeholder="Enter your access key"
-            autoComplete="off"
-          />
-
-          <button
-            type="submit"
-            className="primary-button"
-            disabled={loading}
-          >
-            {loading ? "VERIFYING..." : "ENTER ELISY254"}
-          </button>
-
-          {error && (
-            <div className="error-box">
-              🔴 {error}
+            <div className="landing-status">
+              <StatusPill status="online">🟢 CLOUD ONLINE</StatusPill>
+              <StatusPill status="offline">🔴 MT5 OFFLINE</StatusPill>
             </div>
-          )}
-        </form>
 
-        <div className="landing-status">
-          <span>
-            <StatusDot online={true} />
-            CLOUD
-          </span>
-
-          <span>
-            <StatusDot online={false} />
-            MT5
-          </span>
-        </div>
-
-        <a
-          href="/admin"
-          className="admin-link"
-          onClick={() => {
-            sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-          }}
-        >
-          🔐 Admin Login
-        </a>
-      </section>
-    </main>
-  );
-}
-
-/* =========================================================
-   USER HEADER
-========================================================= */
-
-function UserHeader({
-  user,
-  onLogout,
-  cloudOnline,
-  mt5Online,
-}) {
-  return (
-    <header className="top-header">
-      <div className="brand">
-        <span className="brand-icon">🧠</span>
-
-        <div>
-          <strong>ELISY254</strong>
-          <small>CLOUD</small>
-        </div>
-      </div>
-
-      <div className="header-status">
-        <span>
-          <StatusDot online={cloudOnline} />
-          CLOUD {cloudOnline ? "ONLINE" : "OFFLINE"}
-        </span>
-
-        <span>
-          <StatusDot online={mt5Online} />
-          MT5 {mt5Online ? "CONNECTED" : "OFFLINE"}
-        </span>
-      </div>
-
-      <div className="header-actions">
-        {user?.email && (
-          <span className="header-user">
-            {user.email}
-          </span>
-        )}
-
-        <button
-          className="small-button"
-          onClick={onLogout}
-        >
-          Logout
-        </button>
-      </div>
-    </header>
-  );
-}
-
-/* =========================================================
-   USER NAVIGATION
-========================================================= */
-
-function UserNavigation({ active, setActive }) {
-  return (
-    <nav className="horizontal-nav">
-      {NAV_ITEMS.map(([icon, label]) => (
-        <button
-          key={label}
-          className={active === label ? "active" : ""}
-          onClick={() => setActive(label)}
-        >
-          <span>{icon}</span>
-          {label}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-/* =========================================================
-   USER PANELS
-========================================================= */
-
-function HomePanel({
-  user,
-  mt5,
-  cloudOnline,
-}) {
-  const connected = Boolean(mt5?.connected);
-
-  return (
-    <>
-      <PageTitle
-        icon="🏠"
-        title="Dashboard"
-        description="Your ELISY254 CLOUD control center."
-      />
-
-      <div className="card-grid">
-        <InfoCard
-          icon="☁️"
-          title="Cloud"
-          value={cloudOnline ? "ONLINE" : "OFFLINE"}
-          label="Backend status"
-          status={cloudOnline}
-        />
-
-        <InfoCard
-          icon="📡"
-          title="MT5"
-          value={connected ? "CONNECTED" : "NOT CONNECTED"}
-          label="Real broker connection"
-          status={connected}
-        />
-
-        <InfoCard
-          icon="💰"
-          title="Balance"
-          value={connected ? formatNumber(mt5.balance) : "—"}
-          label={connected ? mt5.currency || "Account" : "No live data"}
-        />
-
-        <InfoCard
-          icon="📊"
-          title="Equity"
-          value={connected ? formatNumber(mt5.equity) : "—"}
-          label={connected ? mt5.currency || "Account" : "No live data"}
-        />
-      </div>
-
-      <div className="two-column">
-        <section className="panel">
-          <div className="panel-header">
-            <h3>Connection</h3>
-            <span className={connected ? "pill green" : "pill red"}>
-              {connected ? "CONNECTED" : "NOT CONNECTED"}
-            </span>
-          </div>
-
-          <StateRow
-            label="Account"
-            value={
-              connected
-                ? maskAccount(mt5.account)
-                : "Not connected"
-            }
-          />
-
-          <StateRow
-            label="Broker"
-            value={connected ? mt5.broker || "—" : "—"}
-          />
-
-          <StateRow
-            label="Server"
-            value={connected ? mt5.server || "—" : "—"}
-          />
-
-          <StateRow
-            label="Currency"
-            value={connected ? mt5.currency || "—" : "—"}
-          />
-
-          <StateRow
-            label="Free Margin"
-            value={
-              connected
-                ? formatNumber(mt5.freeMargin)
-                : "—"
-            }
-          />
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <h3>Trading State</h3>
-          </div>
-
-          <StateRow
-            label="User"
-            value={user?.email || "Authenticated"}
-          />
-
-          <StateRow
-            label="Trading Mode"
-            value="MANUAL"
-          />
-
-          <StateRow
-            label="Analysis Mode"
-            value="ENGINE"
-          />
-
-          <StateRow
-            label="Active Bot"
-            value="ELISY254 ENGINE"
-          />
-
-          <div className="warning-box">
-            ⚠️ Real MT5 data is shown only after a verified
-            broker connection.
-          </div>
-        </section>
-      </div>
-    </>
-  );
-}
-
-function MyBotPanel() {
-  return (
-    <>
-      <PageTitle
-        icon="🤖"
-        title="My Bot"
-        description="Manage the bot currently selected for your account."
-      />
-
-      <section className="panel bot-panel">
-        <div className="bot-main">
-          <div className="bot-icon">🤖</div>
-
-          <div>
-            <h2>ELISY254 ENGINE</h2>
-            <p>
-              Built-in analysis and risk-controlled trading
-              engine.
-            </p>
-
-            <span className="pill green">AVAILABLE</span>
-          </div>
-        </div>
-
-        <div className="control-grid">
-          <StateRow label="Version" value="1.0" />
-          <StateRow label="Status" value="ACTIVE" />
-          <StateRow label="Mode" value="ENGINE" />
-          <StateRow label="Martingale" value="OFF" />
-        </div>
-      </section>
-    </>
-  );
-}
-
-function AutoTradePanel() {
-  const [enabled, setEnabled] = useState(false);
-
-  return (
-    <>
-      <PageTitle
-        icon="⚡"
-        title="Auto Trade"
-        description="Automatic trading requires a verified MT5 connection."
-      />
-
-      <section className="panel">
-        <div className="auto-trade-header">
-          <div>
-            <h2>Automatic Trading</h2>
-            <p>
-              The backend must validate account ownership,
-              margin, risk limits and broker execution before
-              a real order is allowed.
-            </p>
-          </div>
-
-          <button
-            className={`toggle ${enabled ? "on" : ""}`}
-            onClick={() => setEnabled((value) => !value)}
-            type="button"
-          >
-            <span />
-          </button>
-        </div>
-
-        <div className="risk-grid">
-          <StateRow label="Engine" value="READY" />
-          <StateRow label="Risk Check" value="REQUIRED" />
-          <StateRow label="MT5" value="NOT CONNECTED" />
-          <StateRow label="Trading" value={enabled ? "ARMED" : "OFF"} />
-        </div>
-
-        <div className="warning-box">
-          ⚠️ Turning this switch on does not bypass backend
-          risk protection or broker validation.
-        </div>
-      </section>
-    </>
-  );
-}
-
-function SignalsPanel() {
-  return (
-    <>
-      <PageTitle
-        icon="📡"
-        title="Signals"
-        description="Analysis signals appear here when available."
-      />
-
-      <section className="panel empty-panel">
-        <div className="empty-icon">📡</div>
-        <h2>No live signal</h2>
-        <p>
-          No verified market signal is currently available.
-        </p>
-      </section>
-    </>
-  );
-}
-
-function ManualTradePanel() {
-  const [symbol, setSymbol] = useState("EURUSD");
-  const [volume, setVolume] = useState("0.01");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function trade(side) {
-    const token = sessionStorage.getItem(USER_TOKEN_KEY);
-
-    if (!token) {
-      setMessage("Please login again.");
-      return;
-    }
-
-    setLoading(true);
-    setMessage("");
-
-    try {
-      const result = await apiRequest(
-        "/api/trade",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            symbol,
-            volume: Number(volume),
-            side,
-          }),
-        },
-        token
-      );
-
-      setMessage(
-        result?.message ||
-          "Trade request was processed by the backend."
-      );
-    } catch (err) {
-      setMessage(
-        err.message ||
-          "Trade was not executed."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <>
-      <PageTitle
-        icon="✋"
-        title="Manual Trade"
-        description="Manual orders are sent to the backend for validation."
-      />
-
-      <section className="panel">
-        <div className="trade-form">
-          <div>
-            <label>SYMBOL</label>
-
-            <input
-              value={symbol}
-              onChange={(event) =>
-                setSymbol(event.target.value.toUpperCase())
-              }
-            />
-          </div>
-
-          <div>
-            <label>VOLUME</label>
-
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={volume}
-              onChange={(event) =>
-                setVolume(event.target.value)
-              }
-            />
-          </div>
-        </div>
-
-        <div className="trade-buttons">
-          <button
-            className="trade-buy"
-            disabled={loading}
-            onClick={() => trade("BUY")}
-          >
-            BUY
-          </button>
-
-          <button
-            className="trade-sell"
-            disabled={loading}
-            onClick={() => trade("SELL")}
-          >
-            SELL
-          </button>
-        </div>
-
-        {message && (
-          <div className="info-box">
-            {message}
-          </div>
-        )}
-
-        <div className="warning-box">
-          ⚠️ The backend must confirm MT5 connectivity and
-          all risk checks before executing a real order.
-        </div>
-      </section>
-    </>
-  );
-}
-
-function AnalysisPanel() {
-  const [mode, setMode] = useState("ENGINE");
-  const [provider, setProvider] = useState("ChatGPT");
-
-  return (
-    <>
-      <PageTitle
-        icon="📊"
-        title="Analysis"
-        description="Choose the analysis engine used by the platform."
-      />
-
-      <section className="panel">
-        <h3>Analysis Mode</h3>
-
-        <div className="mode-buttons">
-          <button
-            className={mode === "ENGINE" ? "selected" : ""}
-            onClick={() => setMode("ENGINE")}
-          >
-            ⚙️ ENGINE
-          </button>
-
-          <button
-            className={mode === "AI" ? "selected" : ""}
-            onClick={() => setMode("AI")}
-          >
-            🧠 AI
-          </button>
-        </div>
-
-        {mode === "ENGINE" ? (
-          <div className="analysis-box">
-            <h3>⚙️ ELISY254 ENGINE</h3>
-
-            <p>
-              Built-in analysis does not require an external AI
-              provider.
-            </p>
-
-            <div className="analysis-list">
-              <span>✓ Market structure</span>
-              <span>✓ Trend analysis</span>
-              <span>✓ Risk checks</span>
-              <span>✓ Broker validation</span>
-            </div>
-          </div>
-        ) : (
-          <div className="analysis-box">
-            <h3>🧠 AI PROVIDER</h3>
-
-            <select
-              value={provider}
-              onChange={(event) =>
-                setProvider(event.target.value)
-              }
-            >
-              <option>ChatGPT</option>
-              <option>Gemini</option>
-              <option>Cloud AI</option>
-              <option>DeepSeek</option>
-            </select>
-
-            <p>
-              AI API keys should remain on the backend and
-              should never be exposed in the browser.
-            </p>
-          </div>
-        )}
-      </section>
-    </>
-  );
-}
-
-function AvailableBotsPanel() {
-  return (
-    <>
-      <PageTitle
-        icon="🤖"
-        title="Available Bots"
-        description="Bots published by the ELISY254 administrator."
-      />
-
-      <section className="bot-list">
-        <div className="available-bot">
-          <div className="bot-icon">🤖</div>
-
-          <div className="available-bot-content">
-            <h3>ELISY254 ENGINE</h3>
-
-            <p>
-              Built-in trading analysis and risk engine.
-            </p>
-
-            <span className="pill green">PUBLISHED</span>
-          </div>
-
-          <button className="primary-button small">
-            SELECT
-          </button>
-        </div>
-
-        <div className="empty-panel compact">
-          <div className="empty-icon">➕</div>
-          <p>
-            New published bots will appear here automatically.
-          </p>
-        </div>
-      </section>
-    </>
-  );
-}
-
-function PortfolioPanel() {
-  return (
-    <>
-      <PageTitle
-        icon="💼"
-        title="Portfolio"
-        description="Your verified account portfolio information."
-      />
-
-      <section className="panel empty-panel">
-        <div className="empty-icon">💼</div>
-
-        <h2>MT5 not connected</h2>
-
-        <p>
-          Portfolio values will appear after a real MT5
-          connection is verified.
-        </p>
-      </section>
-    </>
-  );
-}
-
-function SettingsPanel() {
-  const settings = [
-    ["Martingale", "OFF"],
-    ["Unlimited Recovery", "OFF"],
-    ["Maximum Daily Loss", "ON"],
-    ["Stop Loss", "ON"],
-    ["Take Profit", "ON"],
-    ["Margin Check", "ON"],
-    ["Maximum Positions", "ON"],
-    ["Execution Verification", "ON"],
-  ];
-
-  return (
-    <>
-      <PageTitle
-        icon="⚙️"
-        title="Settings"
-        description="Risk and platform settings."
-      />
-
-      <section className="panel">
-        <h3>Risk Controls</h3>
-
-        <div className="settings-list">
-          {settings.map(([label, value]) => (
-            <div className="setting-row" key={label}>
-              <span>{label}</span>
-              <span
-                className={
-                  value === "ON"
-                    ? "pill green"
-                    : "pill red"
+            <form onSubmit={handleLogin} className="login-form">
+              <label>
+                {adminMode ? "Admin Email | Password" : "Private Access Key"}
+              </label>
+
+              <input
+                type={adminMode ? "text" : "password"}
+                value={accessKey}
+                onChange={(e) => setAccessKey(e.target.value)}
+                placeholder={
+                  adminMode
+                    ? "admin@example.com|password"
+                    : "Enter your private access key"
                 }
-              >
-                {value}
-              </span>
-            </div>
-          ))}
-        </div>
+              />
 
-        <div className="warning-box">
-          🛡️ Safety controls are enforced by the backend.
-          Frontend switches are not security controls.
-        </div>
-      </section>
-    </>
-  );
-}
+              <button className="primary-button" disabled={busy}>
+                {busy ? "CONNECTING..." : adminMode ? "ADMIN LOGIN" : "ENTER CLOUD"}
+              </button>
+            </form>
 
-function SimplePanel({ icon, title, description }) {
-  return (
-    <>
-      <PageTitle
-        icon={icon}
-        title={title}
-        description={description}
-      />
+            <ErrorBox message={error} />
 
-      <section className="panel empty-panel">
-        <div className="empty-icon">{icon}</div>
-
-        <h2>{title}</h2>
-
-        <p>
-          This section is ready for backend data and future
-          platform features.
-        </p>
-      </section>
-    </>
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => {
+                setAdminMode(!adminMode);
+                setAccessKey("");
+                setError("");
+              }}
+            >
+              {adminMode
+                ? "← User Access"
+                : "Admin Login"}
+            </button>
+          </>
+        )}
+      </div>
+    </main>
   );
 }
 
@@ -927,531 +410,1450 @@ function SimplePanel({ icon, title, description }) {
 ========================================================= */
 
 function UserApp({ onLogout }) {
-  const [active, setActive] = useState("Dashboard");
+  const [activePage, setActivePage] = useState("Dashboard");
   const [user, setUser] = useState(null);
-  const [mt5, setMt5] = useState(null);
-  const [cloudOnline, setCloudOnline] = useState(false);
+  const [health, setHealth] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const token = sessionStorage.getItem(USER_TOKEN_KEY);
+  const [accounts, setAccounts] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+
+  const [bots, setBots] = useState([]);
+  const [botsLoading, setBotsLoading] = useState(false);
+
+  const [trades, setTrades] = useState([]);
+  const [tradesLoading, setTradesLoading] = useState(false);
+
+  const [selectedBot, setSelectedBot] = useState(getStoredBot());
+
+  async function loadUser() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const [meResult, healthResult] = await Promise.all([
+        apiRequest("/api/auth/me"),
+        apiRequest("/api/health"),
+      ]);
+
+      setUser(unwrapData(meResult)?.user || unwrapData(meResult));
+      setHealth(unwrapData(healthResult));
+    } catch (err) {
+      setError(err.message || "Unable to load account.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadAccounts() {
+    try {
+      setAccountsLoading(true);
+
+      const result = await apiRequest("/api/mt5/accounts");
+
+      const list = firstArray(result, ["accounts", "mt5Accounts"]);
+      setAccounts(list);
+    } catch (err) {
+      console.error("MT5 account loading error:", err);
+    } finally {
+      setAccountsLoading(false);
+    }
+  }
+
+  async function loadBots() {
+    try {
+      setBotsLoading(true);
+
+      const result = await apiRequest("/api/bots");
+
+      const list = firstArray(result, ["bots"]);
+      setBots(list);
+    } catch (err) {
+      console.error("Bot loading error:", err);
+    } finally {
+      setBotsLoading(false);
+    }
+  }
+
+  async function loadTrades() {
+    try {
+      setTradesLoading(true);
+
+      const result = await apiRequest("/api/trades");
+
+      const list = firstArray(result, ["trades"]);
+      setTrades(list);
+    } catch (err) {
+      console.error("Trade loading error:", err);
+    } finally {
+      setTradesLoading(false);
+    }
+  }
 
   useEffect(() => {
-    let mounted = true;
+    loadUser();
+    loadAccounts();
+    loadBots();
+    loadTrades();
+  }, []);
 
-    async function load() {
-      if (!token) {
-        onLogout();
-        return;
-      }
-
-      try {
-        const [me, health] = await Promise.all([
-          apiRequest("/api/auth/me", {}, token),
-          apiRequest("/api/health"),
-        ]);
-
-        if (!mounted) return;
-
-        setUser(me?.user || me || null);
-        setCloudOnline(Boolean(health));
-
-        try {
-          const mt5Status = await apiRequest(
-            "/api/mt5/status",
-            {},
-            token
-          );
-
-          if (mounted) {
-            setMt5(mt5Status);
-          }
-        } catch {
-          if (mounted) {
-            setMt5({
-              connected: false,
-            });
-          }
-        }
-      } catch {
-        if (mounted) {
-          setCloudOnline(false);
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
+  useEffect(() => {
+    if (!getUserToken()) {
+      onLogout();
     }
+  }, [onLogout]);
 
-    load();
+  const selectedAccount = accounts[0] || null;
 
-    return () => {
-      mounted = false;
-    };
-  }, [token, onLogout]);
+  function chooseBot(bot) {
+    setSelectedBot(bot);
+    saveSelectedBot(bot);
+  }
 
-  const content = useMemo(() => {
-    if (loading) {
-      return (
-        <section className="loading-panel">
-          <div className="loading-spinner" />
-          <h2>Loading ELISY254 CLOUD...</h2>
-          <p>Checking your secure session.</p>
-        </section>
-      );
-    }
+  function logout() {
+    clearUserToken();
+    onLogout();
+  }
 
-    switch (active) {
-      case "Dashboard":
-        return (
-          <HomePanel
-            user={user}
-            mt5={mt5}
-            cloudOnline={cloudOnline}
-          />
-        );
-
-      case "My Bot":
-        return <MyBotPanel />;
-
-      case "Auto Trade":
-        return <AutoTradePanel />;
-
-      case "Signals":
-        return <SignalsPanel />;
-
-      case "Manual Trade":
-        return <ManualTradePanel />;
-
-      case "Analysis":
-        return <AnalysisPanel />;
-
-      case "Available Bots":
-        return <AvailableBotsPanel />;
-
-      case "News":
-        return (
-          <SimplePanel
-            icon="📰"
-            title="News"
-            description="Platform and market news."
-          />
-        );
-
-      case "Trade History":
-        return (
-          <SimplePanel
-            icon="📜"
-            title="Trade History"
-            description="Verified trading history from your account."
-          />
-        );
-
-      case "Portfolio":
-        return <PortfolioPanel />;
-
-      case "Settings":
-        return <SettingsPanel />;
-
-      default:
-        return null;
-    }
-  }, [active, user, mt5, cloudOnline, loading]);
+  if (loading) {
+    return (
+      <div className="app-shell">
+        <Loading text="Connecting to ELISY254 CLOUD..." />
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
-      <UserHeader
-        user={user}
-        onLogout={onLogout}
-        cloudOnline={cloudOnline}
-        mt5Online={Boolean(mt5?.connected)}
-      />
+      <header className="top-header">
+        <div>
+          <strong>🧠 ELISY254 CLOUD</strong>
+          <small>
+            {user?.email ||
+              user?.username ||
+              user?.name ||
+              "Private User"}
+          </small>
+        </div>
 
-      <UserNavigation
-        active={active}
-        setActive={setActive}
-      />
+        <div className="header-actions">
+          <StatusPill status="online">🟢 CLOUD</StatusPill>
+          <StatusPill
+            status={
+              health?.mt5ProviderConfigured
+                ? "online"
+                : "offline"
+            }
+          >
+            {health?.mt5ProviderConfigured
+              ? "🟢 MT5 PROVIDER"
+              : "🔴 MT5 NOT CONFIGURED"}
+          </StatusPill>
 
-      <main className="main-content">
-        {content}
+          <button className="small-button" onClick={logout}>
+            Logout
+          </button>
+        </div>
+      </header>
+
+      <nav className="horizontal-nav">
+        {USER_NAV.map(([icon, label]) => (
+          <button
+            key={label}
+            className={activePage === label ? "nav-active" : ""}
+            onClick={() => setActivePage(label)}
+          >
+            <span>{icon}</span>
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <main className="page-content">
+        {error && <ErrorBox message={error} />}
+
+        {activePage === "Dashboard" && (
+          <UserDashboard
+            user={user}
+            health={health}
+            accounts={accounts}
+            trades={trades}
+            selectedBot={selectedBot}
+            onRefresh={() => {
+              loadAccounts();
+              loadBots();
+              loadTrades();
+            }}
+          />
+        )}
+
+        {activePage === "My Bot" && (
+          <MyBotPanel
+            selectedBot={selectedBot}
+            bots={bots}
+            loading={botsLoading}
+            onChoose={chooseBot}
+            onOpenAvailable={() => setActivePage("Available Bots")}
+          />
+        )}
+
+        {activePage === "Auto Trade" && (
+          <AutoTradePanel
+            selectedBot={selectedBot}
+            account={selectedAccount}
+            health={health}
+          />
+        )}
+
+        {activePage === "Signals" && (
+          <SignalsPanel
+            selectedBot={selectedBot}
+            health={health}
+          />
+        )}
+
+        {activePage === "Manual Trade" && (
+          <ManualTradePanel
+            account={selectedAccount}
+            health={health}
+            onTradeCreated={loadTrades}
+          />
+        )}
+
+        {activePage === "Analysis" && (
+          <AnalysisPanel
+            selectedBot={selectedBot}
+            account={selectedAccount}
+          />
+        )}
+
+        {activePage === "Available Bots" && (
+          <AvailableBotsPanel
+            bots={bots}
+            loading={botsLoading}
+            selectedBot={selectedBot}
+            onChoose={chooseBot}
+          />
+        )}
+
+        {activePage === "News" && <NewsPanel />}
+
+        {activePage === "Trade History" && (
+          <TradeHistoryPanel
+            trades={trades}
+            loading={tradesLoading}
+            onRefresh={loadTrades}
+          />
+        )}
+
+        {activePage === "Portfolio" && (
+          <PortfolioPanel
+            accounts={accounts}
+            loading={accountsLoading}
+            onRefresh={loadAccounts}
+          />
+        )}
+
+        {activePage === "Settings" && (
+          <UserSettingsPanel
+            user={user}
+            accounts={accounts}
+            loading={accountsLoading}
+            onRefreshAccounts={loadAccounts}
+            selectedBot={selectedBot}
+          />
+        )}
       </main>
     </div>
   );
 }
 
 /* =========================================================
-   ADMIN LOGIN
+   USER DASHBOARD
 ========================================================= */
 
-function AdminLogin({ onLogin }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+function UserDashboard({
+  user,
+  health,
+  accounts,
+  trades,
+  selectedBot,
+  onRefresh,
+}) {
+  const account = accounts[0];
+
+  const balance =
+    account?.balance ??
+    account?.accountInformation?.balance ??
+    account?.info?.balance;
+
+  const equity =
+    account?.equity ??
+    account?.accountInformation?.equity ??
+    account?.info?.equity;
+
+  const connectionStatus =
+    account?.status ||
+    account?.connectionStatus ||
+    (health?.mt5ProviderConfigured ? "Provider configured" : "Not connected");
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>🏠 Dashboard</h1>
+          <p>Welcome back to ELISY254 CLOUD.</p>
+        </div>
+
+        <button className="small-button" onClick={onRefresh}>
+          🔄 Refresh
+        </button>
+      </div>
+
+      <div className="dashboard-grid">
+        <StatCard
+          title="Cloud"
+          value="ONLINE"
+          icon="🟢"
+        />
+
+        <StatCard
+          title="MT5"
+          value={connectionStatus}
+          icon="📡"
+        />
+
+        <StatCard
+          title="Balance"
+          value={balance !== undefined ? formatMoney(balance) : "—"}
+          icon="💰"
+        />
+
+        <StatCard
+          title="Equity"
+          value={equity !== undefined ? formatMoney(equity) : "—"}
+          icon="📈"
+        />
+
+        <StatCard
+          title="Trades"
+          value={trades.length}
+          icon="📜"
+        />
+
+        <StatCard
+          title="Selected Bot"
+          value={selectedBot?.name || "None"}
+          icon="🤖"
+        />
+      </div>
+
+      <div className="panel">
+        <h2>Account</h2>
+
+        <p>
+          User:{" "}
+          <strong>
+            {user?.email || user?.username || user?.name || "Private User"}
+          </strong>
+        </p>
+
+        <p>
+          MT5 provider:{" "}
+          <StatusPill
+            status={health?.mt5ProviderConfigured ? "online" : "offline"}
+          >
+            {health?.mt5Provider || "Not configured"}
+          </StatusPill>
+        </p>
+
+        <p>
+          Live trading:{" "}
+          <StatusPill
+            status={health?.tradingEnabled ? "online" : "offline"}
+          >
+            {health?.tradingEnabled ? "ENABLED" : "DISABLED"}
+          </StatusPill>
+        </p>
+      </div>
+
+      <div className="warning-box">
+        🛡️ ELISY254 does not display fake trading data. If MT5 is not connected,
+        balance/equity/positions remain unavailable.
+      </div>
+    </section>
+  );
+}
+
+function StatCard({ title, value, icon }) {
+  return (
+    <div className="stat-card">
+      <div className="stat-icon">{icon}</div>
+      <div>
+        <small>{title}</small>
+        <strong>{value}</strong>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   MY BOT
+========================================================= */
+
+function MyBotPanel({
+  selectedBot,
+  bots,
+  loading,
+  onChoose,
+  onOpenAvailable,
+}) {
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>🤖 My Bot</h1>
+          <p>Your currently selected trading bot.</p>
+        </div>
+      </div>
+
+      {!selectedBot ? (
+        <div className="panel">
+          <h2>No bot selected</h2>
+          <p>Choose a published bot from Available Bots.</p>
+
+          <button
+            className="primary-button"
+            onClick={onOpenAvailable}
+          >
+            🤖 Browse Available Bots
+          </button>
+        </div>
+      ) : (
+        <div className="panel">
+          {selectedBot.image_url && (
+            <img
+              src={selectedBot.image_url}
+              alt={selectedBot.name || "Bot"}
+              className="bot-image"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+
+          <h2>{selectedBot.name}</h2>
+
+          <StatusPill status={selectedBot.status}>
+            {selectedBot.status || "PUBLISHED"}
+          </StatusPill>
+
+          <p>{selectedBot.description || "No description provided."}</p>
+
+          <div className="settings-list">
+            <div className="setting-row">
+              <span>Version</span>
+              <strong>{selectedBot.version || "1.0.0"}</strong>
+            </div>
+
+            <div className="setting-row">
+              <span>Bot ID</span>
+              <strong>{selectedBot.id || "—"}</strong>
+            </div>
+          </div>
+
+          <button
+            className="small-button"
+            onClick={onOpenAvailable}
+          >
+            Change Bot
+          </button>
+        </div>
+      )}
+
+      {loading && <Loading text="Loading published bots..." />}
+
+      {!loading && bots.length === 0 && (
+        <EmptyBox>No published bots are available yet.</EmptyBox>
+      )}
+    </section>
+  );
+}
+
+/* =========================================================
+   AUTO TRADE
+========================================================= */
+
+function AutoTradePanel({ selectedBot, account, health }) {
+  const canRun =
+    Boolean(selectedBot) &&
+    Boolean(account) &&
+    Boolean(health?.tradingEnabled);
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>⚡ Auto Trade</h1>
+          <p>Automatic trading controlled by the backend risk engine.</p>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Auto Trade Status</h2>
+
+        <div className="settings-list">
+          <div className="setting-row">
+            <span>Selected bot</span>
+            <strong>{selectedBot?.name || "None"}</strong>
+          </div>
+
+          <div className="setting-row">
+            <span>MT5 account</span>
+            <strong>{account?.login || account?.account_id || "None"}</strong>
+          </div>
+
+          <div className="setting-row">
+            <span>Trading enabled</span>
+            <StatusPill status={health?.tradingEnabled ? "online" : "offline"}>
+              {health?.tradingEnabled ? "ENABLED" : "DISABLED"}
+            </StatusPill>
+          </div>
+        </div>
+
+        {!canRun && (
+          <div className="warning-box">
+            🛡️ Auto Trade is currently blocked because the required
+            bot/account/backend trading conditions are not satisfied.
+          </div>
+        )}
+
+        {canRun && (
+          <div className="info-box">
+            🟢 Backend reports trading is enabled. Risk validation is still
+            performed server-side before an order is sent.
+          </div>
+        )}
+
+        <button
+          className="primary-button"
+          disabled={!canRun}
+          title={
+            !canRun
+              ? "Trading is not currently available."
+              : "Start Auto Trade"
+          }
+        >
+          {canRun ? "START AUTO TRADE" : "AUTO TRADE BLOCKED"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   SIGNALS
+========================================================= */
+
+function SignalsPanel({ selectedBot, health }) {
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>📡 Signals</h1>
+          <p>Analysis signals without automatically placing orders.</p>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Signal Mode</h2>
+
+        <div className="settings-list">
+          <div className="setting-row">
+            <span>Bot</span>
+            <strong>{selectedBot?.name || "No bot selected"}</strong>
+          </div>
+
+          <div className="setting-row">
+            <span>Cloud</span>
+            <StatusPill status="online">ONLINE</StatusPill>
+          </div>
+
+          <div className="setting-row">
+            <span>MT5</span>
+            <StatusPill
+              status={health?.mt5ProviderConfigured ? "online" : "offline"}
+            >
+              {health?.mt5ProviderConfigured
+                ? "PROVIDER CONFIGURED"
+                : "NOT CONFIGURED"}
+            </StatusPill>
+          </div>
+        </div>
+
+        <div className="info-box">
+          📡 Signal-only mode does not automatically place a trade.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   MANUAL TRADE
+========================================================= */
+
+function ManualTradePanel({ account, health, onTradeCreated }) {
+  const [symbol, setSymbol] = useState("EURUSD");
+  const [side, setSide] = useState("BUY");
+  const [volume, setVolume] = useState("0.01");
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  async function submit(event) {
-    event.preventDefault();
+  async function submitTrade(e) {
+    e.preventDefault();
 
-    setLoading(true);
+    setMessage("");
     setError("");
 
+    if (!account?.id) {
+      setError("Connect/select an MT5 account first.");
+      return;
+    }
+
+    if (!health?.tradingEnabled) {
+      setError("Backend trading is currently disabled.");
+      return;
+    }
+
+    setBusy(true);
+
     try {
-      const result = await apiRequest("/api/admin/login", {
+      const result = await apiRequest("/api/trade", {
         method: "POST",
-        body: JSON.stringify({
-          email: email.trim(),
-          password,
-        }),
+        body: {
+          accountId: account.id,
+          account_id: account.id,
+          symbol,
+          side,
+          action: side,
+          volume: Number(volume),
+          lot: Number(volume),
+          stopLoss: stopLoss ? Number(stopLoss) : undefined,
+          takeProfit: takeProfit ? Number(takeProfit) : undefined,
+        },
       });
 
-      if (!result?.token) {
-        throw new Error("Admin service did not return a token.");
-      }
-
-      sessionStorage.setItem(
-        ADMIN_TOKEN_KEY,
-        result.token
+      setMessage(
+        result?.message ||
+          result?.status ||
+          "Trade request completed. Check Trade History for the broker result."
       );
 
-      onLogin(result);
+      onTradeCreated?.();
     } catch (err) {
-      setError(
-        err.message ||
-          "Admin login failed."
-      );
+      setError(err.message || "Trade request failed.");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
-    <main className="admin-login-page">
-      <div className="admin-login-glow" />
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>✋ Manual Trade</h1>
+          <p>Manual order request with backend validation.</p>
+        </div>
+      </div>
 
-      <section className="admin-login-card">
-        <div className="admin-lock">🔐</div>
-
-        <div className="landing-badge">
-          <StatusDot online={true} />
-          ADMIN CONTROL
+      <div className="panel">
+        <div className="warning-box">
+          ⚠️ No trade is guaranteed. The backend can reject an order for
+          account, margin, risk, broker, or configuration reasons.
         </div>
 
-        <h1>ELISY254 ADMIN</h1>
+        <form className="trade-form" onSubmit={submitTrade}>
+          <label>
+            MT5 Account
+            <input
+              value={
+                account
+                  ? account.login ||
+                    account.account_id ||
+                    account.id ||
+                    ""
+                  : "No account connected"
+              }
+              readOnly
+            />
+          </label>
 
-        <p>
-          Secure administrator access to the cloud platform.
-        </p>
+          <label>
+            Symbol
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            />
+          </label>
 
-        <form
-          className="access-form"
-          onSubmit={submit}
-        >
-          <label>ADMIN EMAIL</label>
+          <label>
+            Direction
+            <select
+              value={side}
+              onChange={(e) => setSide(e.target.value)}
+            >
+              <option value="BUY">BUY</option>
+              <option value="SELL">SELL</option>
+            </select>
+          </label>
 
-          <input
-            type="email"
-            value={email}
-            onChange={(event) =>
-              setEmail(event.target.value)
-            }
-            placeholder="Admin email"
-            autoComplete="username"
-          />
+          <label>
+            Volume / Lot
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={volume}
+              onChange={(e) => setVolume(e.target.value)}
+            />
+          </label>
 
-          <label>ADMIN PASSWORD</label>
+          <label>
+            Stop Loss
+            <input
+              type="number"
+              step="any"
+              value={stopLoss}
+              onChange={(e) => setStopLoss(e.target.value)}
+              placeholder="Optional"
+            />
+          </label>
 
-          <input
-            type="password"
-            value={password}
-            onChange={(event) =>
-              setPassword(event.target.value)
-            }
-            placeholder="Admin password"
-            autoComplete="current-password"
-          />
+          <label>
+            Take Profit
+            <input
+              type="number"
+              step="any"
+              value={takeProfit}
+              onChange={(e) => setTakeProfit(e.target.value)}
+              placeholder="Optional"
+            />
+          </label>
 
           <button
-            type="submit"
             className="primary-button"
-            disabled={loading}
+            disabled={busy || !account || !health?.tradingEnabled}
           >
-            {loading ? "AUTHENTICATING..." : "ADMIN LOGIN"}
+            {busy ? "SENDING..." : "SEND TRADE REQUEST"}
           </button>
-
-          {error && (
-            <div className="error-box">
-              🔴 {error}
-            </div>
-          )}
         </form>
 
-        <a href="/" className="admin-link">
-          ← Return to ELISY254 CLOUD
-        </a>
-      </section>
-    </main>
+        <ErrorBox message={error} />
+
+        {message && (
+          <div className="success-box">✅ {message}</div>
+        )}
+      </div>
+    </section>
   );
 }
 
 /* =========================================================
-   ADMIN HEADER
+   ANALYSIS
 ========================================================= */
 
-function AdminHeader({ onLogout }) {
-  return (
-    <header className="admin-header">
-      <div className="brand">
-        <span className="brand-icon">🔐</span>
+function AnalysisPanel({ selectedBot, account }) {
+  const [mode, setMode] = useState("ENGINE");
 
+  return (
+    <section>
+      <div className="page-title">
         <div>
-          <strong>ELISY254</strong>
-          <small>ADMIN</small>
+          <h1>📊 Analysis</h1>
+          <p>Choose how market analysis should be handled.</p>
         </div>
       </div>
 
-      <div className="admin-header-center">
-        <StatusDot online={true} />
-        ADMIN CONTROL PANEL
+      <div className="panel">
+        <h2>Analysis Mode</h2>
+
+        <div className="analysis-buttons">
+          {["ENGINE", "ChatGPT", "Gemini", "Cloud AI", "DeepSeek"].map(
+            (item) => (
+              <button
+                key={item}
+                className={mode === item ? "primary-button" : "small-button"}
+                onClick={() => setMode(item)}
+              >
+                {item}
+              </button>
+            )
+          )}
+        </div>
+
+        <div className="settings-list">
+          <div className="setting-row">
+            <span>Selected mode</span>
+            <strong>{mode}</strong>
+          </div>
+
+          <div className="setting-row">
+            <span>Bot</span>
+            <strong>{selectedBot?.name || "None"}</strong>
+          </div>
+
+          <div className="setting-row">
+            <span>Account</span>
+            <strong>
+              {account?.login || account?.account_id || "None"}
+            </strong>
+          </div>
+        </div>
+
+        {mode === "ENGINE" ? (
+          <div className="info-box">
+            🧠 ENGINE mode uses the built-in analysis layer and does not
+            require an external AI API key.
+          </div>
+        ) : (
+          <div className="warning-box">
+            🔐 {mode} requires its API credentials to be configured on the
+            backend. Never put AI secret keys inside Vercel frontend code.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   AVAILABLE BOTS
+========================================================= */
+
+function AvailableBotsPanel({
+  bots,
+  loading,
+  selectedBot,
+  onChoose,
+}) {
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>🤖 Available Bots</h1>
+          <p>Published bots supplied by the ELISY254 backend.</p>
+        </div>
+      </div>
+
+      {loading && <Loading text="Loading published bots..." />}
+
+      {!loading && bots.length === 0 && (
+        <EmptyBox>
+          No published bots are available. An administrator can publish a bot
+          from Bot Management.
+        </EmptyBox>
+      )}
+
+      <div className="bot-grid">
+        {bots.map((bot) => {
+          const selected = selectedBot?.id === bot.id;
+
+          return (
+            <div
+              className={`panel bot-card ${
+                selected ? "selected-card" : ""
+              }`}
+              key={bot.id || bot.name}
+            >
+              {bot.image_url && (
+                <img
+                  src={bot.image_url}
+                  alt={bot.name || "Bot"}
+                  className="bot-image"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
+
+              <h2>{bot.name}</h2>
+
+              <StatusPill status={bot.status}>
+                {bot.status || "PUBLISHED"}
+              </StatusPill>
+
+              <p>{bot.description || "No description."}</p>
+
+              <p>
+                Version: <strong>{bot.version || "1.0.0"}</strong>
+              </p>
+
+              <button
+                className={
+                  selected ? "primary-button" : "small-button"
+                }
+                onClick={() => onChoose(bot)}
+              >
+                {selected ? "✓ SELECTED" : "SELECT BOT"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   NEWS
+========================================================= */
+
+function NewsPanel() {
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>📰 News</h1>
+          <p>Market/news area reserved for verified sources.</p>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>News Feed</h2>
+        <div className="info-box">
+          📰 News integration can be connected later. No fake market news is
+          displayed here.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   TRADE HISTORY
+========================================================= */
+
+function TradeHistoryPanel({ trades, loading, onRefresh }) {
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>📜 Trade History</h1>
+          <p>Orders recorded by the ELISY254 backend.</p>
+        </div>
+
+        <button className="small-button" onClick={onRefresh}>
+          🔄 Refresh
+        </button>
+      </div>
+
+      {loading && <Loading text="Loading trade history..." />}
+
+      {!loading && trades.length === 0 && (
+        <EmptyBox>No trades recorded yet.</EmptyBox>
+      )}
+
+      {!loading && trades.length > 0 && (
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Volume</th>
+                <th>Status</th>
+                <th>Ticket</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {trades.map((trade, index) => (
+                <tr key={trade.id || index}>
+                  <td>{formatDate(trade.created_at || trade.createdAt)}</td>
+                  <td>{trade.symbol || "—"}</td>
+                  <td>{trade.side || trade.action || "—"}</td>
+                  <td>{trade.volume ?? trade.lot ?? "—"}</td>
+                  <td>
+                    <StatusPill status={trade.status}>
+                      {trade.status || "UNKNOWN"}
+                    </StatusPill>
+                  </td>
+                  <td>{trade.ticket || trade.order_id || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* =========================================================
+   PORTFOLIO
+========================================================= */
+
+function PortfolioPanel({ accounts, loading, onRefresh }) {
+  const [positions, setPositions] = useState([]);
+  const [positionsLoading, setPositionsLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadPositions(account) {
+    if (!account?.id) return;
+
+    try {
+      setPositionsLoading(true);
+      setError("");
+
+      const result = await apiRequest(
+        `/api/mt5/accounts/${account.id}/positions`
+      );
+
+      setPositions(firstArray(result, ["positions"]));
+    } catch (err) {
+      setError(err.message || "Unable to load positions.");
+    } finally {
+      setPositionsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (accounts[0]) {
+      loadPositions(accounts[0]);
+    }
+  }, [accounts]);
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>💼 Portfolio</h1>
+          <p>Real MT5 account information when connected.</p>
+        </div>
+
+        <button
+          className="small-button"
+          onClick={() => {
+            onRefresh();
+            if (accounts[0]) loadPositions(accounts[0]);
+          }}
+        >
+          🔄 Refresh
+        </button>
+      </div>
+
+      {error && <ErrorBox message={error} />}
+
+      {loading && <Loading text="Loading MT5 accounts..." />}
+
+      {accounts.length === 0 && !loading && (
+        <EmptyBox>
+          No MT5 account is connected yet. Add one from Settings.
+        </EmptyBox>
+      )}
+
+      {accounts.map((account) => (
+        <div className="panel" key={account.id}>
+          <h2>
+            MT5 Account{" "}
+            {account.login || account.account_id || account.id}
+          </h2>
+
+          <div className="settings-list">
+            <div className="setting-row">
+              <span>Status</span>
+              <StatusPill status={account.status}>
+                {account.status || "UNKNOWN"}
+              </StatusPill>
+            </div>
+
+            <div className="setting-row">
+              <span>Balance</span>
+              <strong>
+                {formatMoney(
+                  account.balance ??
+                    account.accountInformation?.balance
+                )}
+              </strong>
+            </div>
+
+            <div className="setting-row">
+              <span>Equity</span>
+              <strong>
+                {formatMoney(
+                  account.equity ??
+                    account.accountInformation?.equity
+                )}
+              </strong>
+            </div>
+
+            <div className="setting-row">
+              <span>Margin</span>
+              <strong>
+                {formatMoney(
+                  account.margin ??
+                    account.accountInformation?.margin
+                )}
+              </strong>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <div className="panel">
+        <h2>Open Positions</h2>
+
+        {positionsLoading && <Loading text="Loading positions..." />}
+
+        {!positionsLoading && positions.length === 0 && (
+          <EmptyBox>No open positions returned by MT5.</EmptyBox>
+        )}
+
+        {!positionsLoading && positions.length > 0 && (
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Side</th>
+                  <th>Volume</th>
+                  <th>Profit</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {positions.map((position, index) => (
+                  <tr key={position.id || index}>
+                    <td>{position.symbol || "—"}</td>
+                    <td>{position.type || position.side || "—"}</td>
+                    <td>{position.volume ?? "—"}</td>
+                    <td>{position.profit ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   USER SETTINGS + MT5
+========================================================= */
+
+function UserSettingsPanel({
+  user,
+  accounts,
+  loading,
+  onRefreshAccounts,
+  selectedBot,
+}) {
+  const [showConnect, setShowConnect] = useState(false);
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>⚙️ Settings</h1>
+          <p>Account, MT5 connection and risk-control settings.</p>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Account</h2>
+
+        <div className="settings-list">
+          <div className="setting-row">
+            <span>User</span>
+            <strong>
+              {user?.email || user?.username || user?.name || "Private User"}
+            </strong>
+          </div>
+
+          <div className="setting-row">
+            <span>Selected Bot</span>
+            <strong>{selectedBot?.name || "None"}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="section-header">
+          <div>
+            <h2>📡 MT5 Accounts</h2>
+            <p>Connect your trading account through the configured backend provider.</p>
+          </div>
+
+          <button
+            className="primary-button"
+            onClick={() => setShowConnect(!showConnect)}
+          >
+            {showConnect ? "Close" : "＋ Connect MT5"}
+          </button>
+        </div>
+
+        {showConnect && (
+          <MT5ConnectForm
+            onConnected={() => {
+              setShowConnect(false);
+              onRefreshAccounts();
+            }}
+          />
+        )}
+
+        {loading && <Loading text="Loading MT5 accounts..." />}
+
+        {!loading && accounts.length === 0 && (
+          <EmptyBox>
+            No MT5 accounts connected.
+          </EmptyBox>
+        )}
+
+        {accounts.map((account) => (
+          <MT5AccountCard
+            key={account.id}
+            account={account}
+            onSync={onRefreshAccounts}
+          />
+        ))}
+      </div>
+
+      <div className="panel">
+        <h2>🛡️ Risk Controls</h2>
+
+        <div className="settings-list">
+          <SettingRow label="Martingale" value="OFF" />
+          <SettingRow label="Unlimited Recovery" value="OFF" />
+          <SettingRow label="Maximum Daily Loss" value="ON" />
+          <SettingRow label="Stop Loss" value="ON" />
+          <SettingRow label="Take Profit" value="ON" />
+          <SettingRow label="Trade-size Calculation" value="ON" />
+          <SettingRow label="Margin Check" value="ON" />
+          <SettingRow label="Maximum Positions" value="ON" />
+        </div>
+
+        <div className="warning-box">
+          🛡️ These controls are intended to be enforced by the backend.
+          Frontend switches must never be treated as the security layer.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SettingRow({ label, value }) {
+  return (
+    <div className="setting-row">
+      <span>{label}</span>
+      <StatusPill status={value}>{value}</StatusPill>
+    </div>
+  );
+}
+
+function MT5ConnectForm({ onConnected }) {
+  const [form, setForm] = useState({
+    login: "",
+    server: "",
+    password: "",
+    region: "",
+    name: "",
+  });
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  function update(field, value) {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+
+    setError("");
+    setMessage("");
+
+    if (!form.login || !form.server || !form.password) {
+      setError("Login, server and password are required.");
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      const result = await apiRequest("/api/mt5/accounts", {
+        method: "POST",
+        body: {
+          login: form.login,
+          server: form.server,
+          password: form.password,
+          region: form.region || undefined,
+          name: form.name || undefined,
+        },
+      });
+
+      setMessage(
+        result?.message ||
+          "MT5 account connection request created."
+      );
+
+      setForm({
+        login: "",
+        server: "",
+        password: "",
+        region: "",
+        name: "",
+      });
+
+      setTimeout(() => {
+        onConnected?.();
+      }, 700);
+    } catch (err) {
+      setError(err.message || "MT5 connection failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="connect-box">
+      <div className="warning-box">
+        🔐 Your MT5 password is sent to the backend provider during connection.
+        The frontend does not store it in localStorage.
+      </div>
+
+      <form className="trade-form" onSubmit={submit}>
+        <label>
+          Account Name
+          <input
+            value={form.name}
+            onChange={(e) => update("name", e.target.value)}
+            placeholder="My MT5"
+          />
+        </label>
+
+        <label>
+          MT5 Login
+          <input
+            value={form.login}
+            onChange={(e) => update("login", e.target.value)}
+            placeholder="12345678"
+          />
+        </label>
+
+        <label>
+          Broker Server
+          <input
+            value={form.server}
+            onChange={(e) => update("server", e.target.value)}
+            placeholder="Broker-Server"
+          />
+        </label>
+
+        <label>
+          MT5 Password
+          <input
+            type="password"
+            value={form.password}
+            onChange={(e) => update("password", e.target.value)}
+          />
+        </label>
+
+        <label>
+          Provider Region
+          <input
+            value={form.region}
+            onChange={(e) => update("region", e.target.value)}
+            placeholder="Optional"
+          />
+        </label>
+
+        <button
+          className="primary-button"
+          disabled={busy}
+        >
+          {busy ? "CONNECTING..." : "CONNECT MT5"}
+        </button>
+      </form>
+
+      <ErrorBox message={error} />
+
+      {message && (
+        <div className="success-box">✅ {message}</div>
+      )}
+    </div>
+  );
+}
+
+function MT5AccountCard({ account, onSync }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function sync() {
+    setError("");
+    setBusy(true);
+
+    try {
+      await apiRequest(`/api/mt5/accounts/${account.id}/sync`, {
+        method: "POST",
+      });
+
+      onSync?.();
+    } catch (err) {
+      setError(err.message || "Account sync failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="account-card">
+      <div>
+        <h3>
+          {account.name ||
+            account.login ||
+            account.account_id ||
+            `MT5 ${account.id}`}
+        </h3>
+
+        <p>
+          Login:{" "}
+          <strong>
+            {account.login || account.account_id || "—"}
+          </strong>
+        </p>
+
+        <p>
+          Server:{" "}
+          <strong>{account.server || "—"}</strong>
+        </p>
+
+        <StatusPill status={account.status}>
+          {account.status || "UNKNOWN"}
+        </StatusPill>
       </div>
 
       <button
         className="small-button"
-        onClick={onLogout}
+        onClick={sync}
+        disabled={busy}
       >
-        Logout
+        {busy ? "SYNCING..." : "SYNC"}
       </button>
-    </header>
-  );
-}
 
-/* =========================================================
-   ADMIN NAVIGATION
-========================================================= */
-
-function AdminNavigation({ active, setActive }) {
-  return (
-    <nav className="horizontal-nav admin-nav">
-      {ADMIN_NAV_ITEMS.map(([icon, label]) => (
-        <button
-          key={label}
-          className={active === label ? "active" : ""}
-          onClick={() => setActive(label)}
-        >
-          <span>{icon}</span>
-          {label}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-/* =========================================================
-   ADMIN DASHBOARD
-========================================================= */
-
-function AdminDashboard({ data }) {
-  const stats = data?.stats || data || {};
-
-  return (
-    <>
-      <PageTitle
-        icon="🏠"
-        title="Admin Dashboard"
-        description="Real platform information from the backend."
-      />
-
-      <div className="card-grid">
-        <InfoCard
-          icon="☁️"
-          title="Cloud"
-          value="ONLINE"
-          label="Backend reachable"
-          status={true}
-        />
-
-        <InfoCard
-          icon="👥"
-          title="Users"
-          value={
-            stats.users ??
-            stats.totalUsers ??
-            "—"
-          }
-          label="Registered users"
-        />
-
-        <InfoCard
-          icon="📡"
-          title="MT5 Accounts"
-          value={
-            stats.mt5Accounts ??
-            stats.connectedMT5 ??
-            "—"
-          }
-          label="Backend records"
-        />
-
-        <InfoCard
-          icon="🤖"
-          title="Bots"
-          value={
-            stats.bots ??
-            stats.activeBots ??
-            "—"
-          }
-          label="Bot records"
-        />
-
-        <InfoCard
-          icon="⚡"
-          title="Trades Today"
-          value={
-            stats.tradesToday ??
-            "—"
-          }
-          label="Verified records"
-        />
-
-        <InfoCard
-          icon="❌"
-          title="Failed Orders"
-          value={
-            stats.failedOrders ??
-            "—"
-          }
-          label="Recorded failures"
-        />
-
-        <InfoCard
-          icon="🧠"
-          title="AI Requests"
-          value={
-            stats.aiRequests ??
-            "—"
-          }
-          label="Backend records"
-        />
-
-        <InfoCard
-          icon="🔑"
-          title="Access Keys"
-          value={
-            stats.accessKeys ??
-            "—"
-          }
-          label="Backend records"
-        />
-      </div>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h3>System State</h3>
-
-          <span className="pill green">
-            BACKEND CONNECTED
-          </span>
-        </div>
-
-        <StateRow
-          label="Trading"
-          value={
-            stats.tradingEnabled === true
-              ? "ENABLED"
-              : "DISABLED"
-          }
-        />
-
-        <StateRow
-          label="MT5 Provider"
-          value={
-            stats.mt5Provider ||
-            "Not configured"
-          }
-        />
-
-        <StateRow
-          label="AI"
-          value={
-            stats.aiEnabled === true
-              ? "ENABLED"
-              : "CONFIGURATION DEPENDENT"
-          }
-        />
-
-        <StateRow
-          label="Environment"
-          value={
-            stats.environment ||
-            "Production"
-          }
-        />
-      </section>
-
-      <div className="warning-box">
-        🛡️ Numbers are displayed only when supplied by the
-        backend. The frontend does not invent users, trades,
-        balances or MT5 connections.
-      </div>
-    </>
-  );
-}
-
-/* =========================================================
-   ADMIN SECTION
-========================================================= */
-
-function AdminSection({ title, icon, description }) {
-  return (
-    <>
-      <PageTitle
-        icon={icon}
-        title={title}
-        description={description}
-      />
-
-      <section className="admin-feature-grid">
-        <div className="admin-feature-card">
-          <div className="feature-icon">{icon}</div>
-
-          <h3>{title}</h3>
-
-          <p>
-            This administration section is ready for
-            backend-managed data and controls.
-          </p>
-
-          <span className="pill green">
-            ADMIN ONLY
-          </span>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h3>System Information</h3>
-          </div>
-
-          <StateRow
-            label="Source"
-            value="Backend"
-          />
-
-          <StateRow
-            label="Authentication"
-            value="Admin JWT"
-          />
-
-          <StateRow
-            label="Frontend"
-            value="Vercel"
-          />
-
-          <StateRow
-            label="Backend"
-            value="Render"
-          />
-        </div>
-      </section>
-    </>
+      <ErrorBox message={error} />
+    </div>
   );
 }
 
@@ -1460,209 +1862,1000 @@ function AdminSection({ title, icon, description }) {
 ========================================================= */
 
 function AdminApp({ onLogout }) {
-  const [active, setActive] = useState("Dashboard");
-  const [data, setData] = useState(null);
+  const [activePage, setActivePage] = useState("Dashboard");
+  const [admin, setAdmin] = useState(null);
+  const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const token = sessionStorage.getItem(ADMIN_TOKEN_KEY);
-
   useEffect(() => {
-    let mounted = true;
+    loadAdmin();
+  }, []);
 
-    async function loadDashboard() {
-      if (!token) {
-        onLogout();
-        return;
-      }
+  async function loadAdmin() {
+    try {
+      setLoading(true);
+      setError("");
 
-      try {
-        const result = await apiRequest(
-          "/api/admin/dashboard",
-          {},
-          token
-        );
+      const [me, dashboardData] = await Promise.all([
+        apiRequest("/api/admin/me", { admin: true }),
+        apiRequest("/api/admin/dashboard", { admin: true }),
+      ]);
 
-        if (mounted) {
-          setData(result);
-        }
-      } catch (err) {
-        if (mounted) {
-          setError(
-            err.message ||
-              "Could not load admin dashboard."
-          );
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
+      setAdmin(unwrapData(me)?.admin || unwrapData(me));
+      setDashboard(unwrapData(dashboardData));
+    } catch (err) {
+      setError(err.message || "Admin session expired.");
+
+      clearAdminToken();
+      setTimeout(() => onLogout(), 500);
+    } finally {
+      setLoading(false);
     }
+  }
 
-    loadDashboard();
+  function logout() {
+    clearAdminToken();
+    onLogout();
+  }
 
-    return () => {
-      mounted = false;
-    };
-  }, [token, onLogout]);
-
-  const content = useMemo(() => {
-    if (loading) {
-      return (
-        <section className="loading-panel">
-          <div className="loading-spinner" />
-          <h2>Loading Admin Panel...</h2>
-          <p>Checking administrator session.</p>
-        </section>
-      );
-    }
-
-    if (error) {
-      return (
-        <section className="panel">
-          <div className="error-box">
-            🔴 {error}
-          </div>
-
-          <p>
-            The admin frontend is running, but the backend
-            admin endpoint did not return dashboard data.
-          </p>
-        </section>
-      );
-    }
-
-    switch (active) {
-      case "Dashboard":
-        return <AdminDashboard data={data} />;
-
-      case "Users":
-        return (
-          <AdminSection
-            icon="👥"
-            title="Users"
-            description="View and manage registered platform users."
-          />
-        );
-
-      case "Bot Management":
-        return (
-          <AdminSection
-            icon="🤖"
-            title="Bot Management"
-            description="Create, publish, edit and disable trading bots."
-          />
-        );
-
-      case "MT5 Accounts":
-        return (
-          <AdminSection
-            icon="📡"
-            title="MT5 Accounts"
-            description="Monitor verified MT5 account connections."
-          />
-        );
-
-      case "Trading Activity":
-        return (
-          <AdminSection
-            icon="⚡"
-            title="Trading Activity"
-            description="Monitor backend trading activity and execution results."
-          />
-        );
-
-      case "Analysis / AI":
-        return (
-          <AdminSection
-            icon="📊"
-            title="Analysis / AI"
-            description="Manage engine and AI analysis configuration."
-          />
-        );
-
-      case "Access Keys":
-        return (
-          <AdminSection
-            icon="🔑"
-            title="Access Keys"
-            description="Manage platform access credentials."
-          />
-        );
-
-      case "Risk Controls":
-        return (
-          <AdminSection
-            icon="🛡️"
-            title="Risk Controls"
-            description="Configure backend-enforced trading safety limits."
-          />
-        );
-
-      case "Portfolio / Accounts":
-        return (
-          <AdminSection
-            icon="💰"
-            title="Portfolio / Accounts"
-            description="Monitor verified account information."
-          />
-        );
-
-      case "Trade History":
-        return (
-          <AdminSection
-            icon="📜"
-            title="Trade History"
-            description="Review recorded trading activity."
-          />
-        );
-
-      case "News":
-        return (
-          <AdminSection
-            icon="📰"
-            title="News"
-            description="Manage platform news and announcements."
-          />
-        );
-
-      case "System Settings":
-        return (
-          <AdminSection
-            icon="⚙️"
-            title="System Settings"
-            description="Manage platform-level configuration."
-          />
-        );
-
-      case "Admin Security":
-        return (
-          <AdminSection
-            icon="🔐"
-            title="Admin Security"
-            description="Administrator authentication and security controls."
-          />
-        );
-
-      default:
-        return null;
-    }
-  }, [active, data, loading, error]);
+  if (loading) {
+    return (
+      <div className="app-shell">
+        <Loading text="Loading admin panel..." />
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell admin-shell">
-      <AdminHeader onLogout={onLogout} />
+      <header className="top-header">
+        <div>
+          <strong>🧠 ELISY254 CLOUD — ADMIN</strong>
+          <small>
+            {admin?.email ||
+              admin?.username ||
+              "Administrator"}
+          </small>
+        </div>
 
-      <AdminNavigation
-        active={active}
-        setActive={setActive}
-      />
+        <div className="header-actions">
+          <StatusPill status="online">🟢 ADMIN</StatusPill>
 
-      <main className="main-content">
-        {content}
+          <button className="small-button" onClick={logout}>
+            Logout
+          </button>
+        </div>
+      </header>
+
+      <nav className="horizontal-nav">
+        {ADMIN_NAV.map(([icon, label]) => (
+          <button
+            key={label}
+            className={activePage === label ? "nav-active" : ""}
+            onClick={() => setActivePage(label)}
+          >
+            <span>{icon}</span>
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <main className="page-content">
+        {error && <ErrorBox message={error} />}
+
+        {activePage === "Dashboard" && (
+          <AdminDashboard
+            dashboard={dashboard}
+            onRefresh={loadAdmin}
+          />
+        )}
+
+        {activePage === "Bot Management" && (
+          <AdminBotManagement />
+        )}
+
+        {activePage === "Users" && (
+          <AdminUsers dashboard={dashboard} />
+        )}
+
+        {activePage === "MT5 Accounts" && (
+          <AdminMT5Accounts />
+        )}
+
+        {activePage === "Trading Activity" && (
+          <AdminTradingActivity />
+        )}
+
+        {activePage === "Analysis / AI" && (
+          <AdminAnalysis />
+        )}
+
+        {activePage === "Access Keys" && (
+          <AdminAccessKeys />
+        )}
+
+        {activePage === "Risk Controls" && (
+          <AdminRiskControls />
+        )}
+
+        {activePage === "Portfolio / Accounts" && (
+          <AdminPortfolio />
+        )}
+
+        {activePage === "Trade History" && (
+          <AdminTradeHistory />
+        )}
+
+        {activePage === "News" && (
+          <AdminNews />
+        )}
+
+        {activePage === "System Settings" && (
+          <AdminSystemSettings dashboard={dashboard} />
+        )}
+
+        {activePage === "Admin Security" && (
+          <AdminSecurity />
+        )}
       </main>
     </div>
+  );
+}
+
+/* =========================================================
+   ADMIN DASHBOARD
+========================================================= */
+
+function AdminDashboard({ dashboard, onRefresh }) {
+  const stats = dashboard?.stats || dashboard || {};
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>🏠 Admin Dashboard</h1>
+          <p>ELISY254 CLOUD platform overview.</p>
+        </div>
+
+        <button className="small-button" onClick={onRefresh}>
+          🔄 Refresh
+        </button>
+      </div>
+
+      <div className="dashboard-grid">
+        <StatCard
+          title="Users"
+          value={
+            stats.users ??
+            stats.userCount ??
+            stats.totalUsers ??
+            "—"
+          }
+          icon="👥"
+        />
+
+        <StatCard
+          title="MT5 Accounts"
+          value={
+            stats.mt5Accounts ??
+            stats.accounts ??
+            stats.accountCount ??
+            "—"
+          }
+          icon="📡"
+        />
+
+        <StatCard
+          title="Bots"
+          value={
+            stats.bots ??
+            stats.botCount ??
+            stats.totalBots ??
+            "—"
+          }
+          icon="🤖"
+        />
+
+        <StatCard
+          title="Trades"
+          value={
+            stats.trades ??
+            stats.tradeCount ??
+            stats.totalTrades ??
+            "—"
+          }
+          icon="📜"
+        />
+
+        <StatCard
+          title="Trading"
+          value={
+            stats.tradingEnabled === true
+              ? "ENABLED"
+              : "DISABLED"
+          }
+          icon="⚡"
+        />
+
+        <StatCard
+          title="MT5 Provider"
+          value={
+            stats.mt5Provider ||
+            stats.provider ||
+            "metaapi"
+          }
+          icon="☁️"
+        />
+      </div>
+
+      <div className="warning-box">
+        🛡️ Admin dashboard displays backend state. It does not create fake
+        users, balances, trades or MT5 connections.
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   ADMIN BOT MANAGEMENT
+========================================================= */
+
+function AdminBotManagement() {
+  const [bots, setBots] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [editingBot, setEditingBot] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+
+  async function loadBots() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const result = await apiRequest("/api/admin/bots", {
+        admin: true,
+      });
+
+      setBots(firstArray(result, ["bots"]));
+    } catch (err) {
+      setError(err.message || "Unable to load bots.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadBots();
+  }, []);
+
+  async function deleteBot(id) {
+    if (!window.confirm("Delete this bot?")) return;
+
+    try {
+      await apiRequest(`/api/admin/bots/${id}`, {
+        method: "DELETE",
+        admin: true,
+      });
+
+      await loadBots();
+    } catch (err) {
+      setError(err.message || "Unable to delete bot.");
+    }
+  }
+
+  async function updateStatus(bot, status) {
+    try {
+      await apiRequest(`/api/admin/bots/${bot.id}`, {
+        method: "PATCH",
+        admin: true,
+        body: {
+          status,
+        },
+      });
+
+      await loadBots();
+    } catch (err) {
+      setError(err.message || "Unable to update bot.");
+    }
+  }
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>🤖 Bot Management</h1>
+          <p>Add, edit, publish, disable and delete platform bots.</p>
+        </div>
+
+        <button
+          className="primary-button"
+          onClick={() => {
+            setEditingBot(null);
+            setShowForm(true);
+          }}
+        >
+          ＋ ADD BOT
+        </button>
+      </div>
+
+      <div className="info-box">
+        📌 Bot images/files currently use URL fields. The current backend does
+        not yet provide object-storage multipart upload, so this screen does
+        not pretend that local file uploads are already implemented.
+      </div>
+
+      <ErrorBox message={error} />
+
+      {showForm && (
+        <AdminBotForm
+          bot={editingBot}
+          onCancel={() => {
+            setShowForm(false);
+            setEditingBot(null);
+          }}
+          onSaved={() => {
+            setShowForm(false);
+            setEditingBot(null);
+            loadBots();
+          }}
+        />
+      )}
+
+      {loading && <Loading text="Loading bots..." />}
+
+      {!loading && bots.length === 0 && (
+        <EmptyBox>
+          No bots exist yet. Use ADD BOT to create the first one.
+        </EmptyBox>
+      )}
+
+      <div className="bot-grid">
+        {bots.map((bot) => (
+          <div className="panel bot-card" key={bot.id}>
+            {bot.image_url && (
+              <img
+                src={bot.image_url}
+                alt={bot.name || "Bot"}
+                className="bot-image"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            )}
+
+            <h2>{bot.name}</h2>
+
+            <StatusPill status={bot.status}>
+              {bot.status || "DRAFT"}
+            </StatusPill>
+
+            <p>
+              {bot.description || "No description."}
+            </p>
+
+            <p>
+              Version: <strong>{bot.version || "1.0.0"}</strong>
+            </p>
+
+            <div className="button-row">
+              <button
+                className="small-button"
+                onClick={() => {
+                  setEditingBot(bot);
+                  setShowForm(true);
+                }}
+              >
+                ✏️ Edit
+              </button>
+
+              {String(bot.status).toUpperCase() !== "PUBLISHED" ? (
+                <button
+                  className="small-button"
+                  onClick={() =>
+                    updateStatus(bot, "PUBLISHED")
+                  }
+                >
+                  🟢 Publish
+                </button>
+              ) : (
+                <button
+                  className="small-button"
+                  onClick={() =>
+                    updateStatus(bot, "DISABLED")
+                  }
+                >
+                  🔴 Disable
+                </button>
+              )}
+
+              <button
+                className="danger-button"
+                onClick={() => deleteBot(bot.id)}
+              >
+                🗑️ Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminBotForm({ bot, onCancel, onSaved }) {
+  const [form, setForm] = useState({
+    name: bot?.name || "",
+    description: bot?.description || "",
+    image_url: bot?.image_url || "",
+    file_url: bot?.file_url || "",
+    version: bot?.version || "1.0.0",
+    status: bot?.status || "DRAFT",
+  });
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  function update(field, value) {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+
+    setError("");
+
+    if (!form.name.trim()) {
+      setError("Bot name is required.");
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      if (bot?.id) {
+        await apiRequest(`/api/admin/bots/${bot.id}`, {
+          method: "PATCH",
+          admin: true,
+          body: form,
+        });
+      } else {
+        await apiRequest("/api/admin/bots", {
+          method: "POST",
+          admin: true,
+          body: form,
+        });
+      }
+
+      onSaved?.();
+    } catch (err) {
+      setError(err.message || "Unable to save bot.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h2>{bot ? "✏️ Edit Bot" : "➕ Add Bot"}</h2>
+
+      <form className="trade-form" onSubmit={submit}>
+        <label>
+          Bot Name
+          <input
+            value={form.name}
+            onChange={(e) =>
+              update("name", e.target.value)
+            }
+            placeholder="ELISY254 ENGINE"
+          />
+        </label>
+
+        <label>
+          Description
+          <textarea
+            value={form.description}
+            onChange={(e) =>
+              update("description", e.target.value)
+            }
+            rows="4"
+            placeholder="Describe the bot..."
+          />
+        </label>
+
+        <label>
+          Bot Image URL
+          <input
+            value={form.image_url}
+            onChange={(e) =>
+              update("image_url", e.target.value)
+            }
+            placeholder="https://..."
+          />
+        </label>
+
+        <label>
+          Bot File URL
+          <input
+            value={form.file_url}
+            onChange={(e) =>
+              update("file_url", e.target.value)
+            }
+            placeholder="https://..."
+          />
+        </label>
+
+        <label>
+          Version
+          <input
+            value={form.version}
+            onChange={(e) =>
+              update("version", e.target.value)
+            }
+            placeholder="1.0.0"
+          />
+        </label>
+
+        <label>
+          Status
+          <select
+            value={form.status}
+            onChange={(e) =>
+              update("status", e.target.value)
+            }
+          >
+            <option value="DRAFT">DRAFT</option>
+            <option value="PUBLISHED">PUBLISHED</option>
+            <option value="DISABLED">DISABLED</option>
+          </select>
+        </label>
+
+        <div className="button-row">
+          <button
+            type="submit"
+            className="primary-button"
+            disabled={busy}
+          >
+            {busy
+              ? "SAVING..."
+              : bot
+              ? "UPDATE BOT"
+              : "SAVE BOT"}
+          </button>
+
+          <button
+            type="button"
+            className="small-button"
+            onClick={onCancel}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+
+      <ErrorBox message={error} />
+    </div>
+  );
+}
+
+/* =========================================================
+   ADMIN USERS
+========================================================= */
+
+function AdminUsers({ dashboard }) {
+  return (
+    <AdminSection
+      title="👥 Users"
+      description="Platform user overview."
+    >
+      <div className="info-box">
+        👥 User management is connected to the backend account system.
+      </div>
+
+      <StatCard
+        title="Registered Users"
+        value={
+          dashboard?.users ??
+          dashboard?.userCount ??
+          dashboard?.stats?.users ??
+          "—"
+        }
+        icon="👥"
+      />
+    </AdminSection>
+  );
+}
+
+/* =========================================================
+   ADMIN MT5 ACCOUNTS
+========================================================= */
+
+function AdminMT5Accounts() {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const result = await apiRequest(
+        "/api/admin/mt5-accounts",
+        { admin: true }
+      );
+
+      setAccounts(
+        firstArray(result, ["accounts", "mt5Accounts"])
+      );
+    } catch (err) {
+      setError(err.message || "Unable to load MT5 accounts.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>💳 MT5 Accounts</h1>
+          <p>Admin view of connected trading accounts.</p>
+        </div>
+
+        <button className="small-button" onClick={load}>
+          🔄 Refresh
+        </button>
+      </div>
+
+      <ErrorBox message={error} />
+
+      {loading && <Loading text="Loading MT5 accounts..." />}
+
+      {!loading && accounts.length === 0 && (
+        <EmptyBox>No MT5 accounts are registered.</EmptyBox>
+      )}
+
+      {!loading &&
+        accounts.map((account) => (
+          <div className="panel" key={account.id}>
+            <h2>
+              {account.login ||
+                account.account_id ||
+                account.id}
+            </h2>
+
+            <div className="settings-list">
+              <div className="setting-row">
+                <span>User</span>
+                <strong>
+                  {account.user_id ||
+                    account.userId ||
+                    "—"}
+                </strong>
+              </div>
+
+              <div className="setting-row">
+                <span>Server</span>
+                <strong>{account.server || "—"}</strong>
+              </div>
+
+              <div className="setting-row">
+                <span>Status</span>
+                <StatusPill status={account.status}>
+                  {account.status || "UNKNOWN"}
+                </StatusPill>
+              </div>
+
+              <div className="setting-row">
+                <span>Balance</span>
+                <strong>
+                  {formatMoney(account.balance)}
+                </strong>
+              </div>
+
+              <div className="setting-row">
+                <span>Equity</span>
+                <strong>
+                  {formatMoney(account.equity)}
+                </strong>
+              </div>
+            </div>
+          </div>
+        ))}
+    </section>
+  );
+}
+
+/* =========================================================
+   ADMIN TRADING ACTIVITY
+========================================================= */
+
+function AdminTradingActivity() {
+  const [trades, setTrades] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const result = await apiRequest(
+        "/api/admin/trades",
+        { admin: true }
+      );
+
+      setTrades(firstArray(result, ["trades"]));
+    } catch (err) {
+      setError(err.message || "Unable to load trading activity.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>📊 Trading Activity</h1>
+          <p>Backend-recorded trading activity.</p>
+        </div>
+
+        <button className="small-button" onClick={load}>
+          🔄 Refresh
+        </button>
+      </div>
+
+      <ErrorBox message={error} />
+
+      {loading && <Loading text="Loading trading activity..." />}
+
+      {!loading && trades.length === 0 && (
+        <EmptyBox>No trading activity recorded.</EmptyBox>
+      )}
+
+      {!loading && trades.length > 0 && (
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Volume</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {trades.map((trade, index) => (
+                <tr key={trade.id || index}>
+                  <td>
+                    {formatDate(
+                      trade.created_at ||
+                        trade.createdAt
+                    )}
+                  </td>
+
+                  <td>
+                    {trade.user_id ||
+                      trade.userId ||
+                      "—"}
+                  </td>
+
+                  <td>{trade.symbol || "—"}</td>
+
+                  <td>
+                    {trade.side ||
+                      trade.action ||
+                      "—"}
+                  </td>
+
+                  <td>
+                    {trade.volume ??
+                      trade.lot ??
+                      "—"}
+                  </td>
+
+                  <td>
+                    <StatusPill status={trade.status}>
+                      {trade.status || "UNKNOWN"}
+                    </StatusPill>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* =========================================================
+   ADMIN PLACEHOLDER / INFORMATION SECTIONS
+========================================================= */
+
+function AdminAnalysis() {
+  return (
+    <AdminSection
+      title="🧠 Analysis / AI"
+      description="Analysis provider configuration."
+    >
+      <div className="settings-list">
+        <SettingRow label="ENGINE" value="READY" />
+        <SettingRow label="ChatGPT" value="BACKEND KEY REQUIRED" />
+        <SettingRow label="Gemini" value="BACKEND KEY REQUIRED" />
+        <SettingRow label="Cloud AI" value="BACKEND KEY REQUIRED" />
+        <SettingRow label="DeepSeek" value="BACKEND KEY REQUIRED" />
+      </div>
+
+      <div className="warning-box">
+        🔐 AI secret keys must remain on Render/backend environment variables.
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminAccessKeys() {
+  return (
+    <AdminSection
+      title="🔑 Access Keys"
+      description="Private user access-key management."
+    >
+      <div className="info-box">
+        🔑 Access-key administration can be expanded with dedicated backend
+        endpoints. The current frontend does not fake key creation.
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminRiskControls() {
+  return (
+    <AdminSection
+      title="🛡️ Risk Controls"
+      description="Platform safety configuration."
+    >
+      <div className="settings-list">
+        <SettingRow label="Maximum Daily Loss" value="ON" />
+        <SettingRow label="Margin Check" value="ON" />
+        <SettingRow label="Maximum Positions" value="ON" />
+        <SettingRow label="Stop Loss" value="ON" />
+        <SettingRow label="Take Profit" value="ON" />
+        <SettingRow label="Martingale" value="OFF" />
+        <SettingRow label="Unlimited Recovery" value="OFF" />
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminPortfolio() {
+  return (
+    <AdminSection
+      title="💼 Portfolio / Accounts"
+      description="Platform portfolio overview."
+    >
+      <div className="info-box">
+        💼 Real account balances and positions are displayed when MT5
+        provider data is available.
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminTradeHistory() {
+  return (
+    <AdminSection
+      title="📜 Trade History"
+      description="Historical backend trade records."
+    >
+      <AdminTradingActivity />
+    </AdminSection>
+  );
+}
+
+function AdminNews() {
+  return (
+    <AdminSection
+      title="📰 News"
+      description="Verified market news management."
+    >
+      <div className="info-box">
+        📰 News publishing endpoints are not enabled in the current backend.
+        No fake news is displayed.
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminSystemSettings({ dashboard }) {
+  const stats = dashboard?.stats || dashboard || {};
+
+  return (
+    <AdminSection
+      title="⚙️ System Settings"
+      description="Current backend system state."
+    >
+      <div className="settings-list">
+        <div className="setting-row">
+          <span>Trading Enabled</span>
+          <StatusPill
+            status={stats.tradingEnabled ? "online" : "offline"}
+          >
+            {stats.tradingEnabled ? "ENABLED" : "DISABLED"}
+          </StatusPill>
+        </div>
+
+        <div className="setting-row">
+          <span>MT5 Provider</span>
+          <strong>
+            {stats.mt5Provider || "metaapi"}
+          </strong>
+        </div>
+
+        <div className="setting-row">
+          <span>Environment</span>
+          <strong>Backend controlled</strong>
+        </div>
+      </div>
+
+      <div className="warning-box">
+        ⚠️ The current server does not expose a persistent `/api/admin/settings`
+        endpoint, so this screen intentionally does not pretend editable
+        settings are being saved.
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminSecurity() {
+  return (
+    <AdminSection
+      title="🔐 Admin Security"
+      description="Security information."
+    >
+      <div className="settings-list">
+        <SettingRow label="Admin JWT" value="BACKEND" />
+        <SettingRow label="Admin Password" value="BACKEND ENV" />
+        <SettingRow label="Frontend Admin Secret" value="NOT STORED" />
+      </div>
+
+      <div className="warning-box">
+        🔐 Never put ADMIN_PASSWORD, JWT secrets, MetaApi tokens, broker
+        passwords or AI API keys in Vercel frontend variables.
+      </div>
+    </AdminSection>
+  );
+}
+
+function AdminSection({ title, description, children }) {
+  return (
+    <section>
+      <div className="page-title">
+        <div>
+          <h1>{title}</h1>
+          <p>{description}</p>
+        </div>
+      </div>
+
+      <div className="panel">{children}</div>
+    </section>
   );
 }
 
@@ -1671,69 +2864,79 @@ function AdminApp({ onLogout }) {
 ========================================================= */
 
 function App() {
-  const [splash, setSplash] = useState(true);
+  const [route, setRoute] = useState(window.location.pathname);
   const [userLoggedIn, setUserLoggedIn] = useState(
-    Boolean(sessionStorage.getItem(USER_TOKEN_KEY))
+    Boolean(getUserToken())
   );
-
   const [adminLoggedIn, setAdminLoggedIn] = useState(
-    Boolean(sessionStorage.getItem(ADMIN_TOKEN_KEY))
+    Boolean(getAdminToken())
   );
 
-  const isAdminRoute =
-    window.location.pathname.startsWith("/admin");
-
-  const finishSplash = () => {
-    setSplash(false);
-  };
-
-  function userLogout() {
-    sessionStorage.removeItem(USER_TOKEN_KEY);
-    setUserLoggedIn(false);
-  }
-
-  function adminLogout() {
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-    setAdminLoggedIn(false);
-
-    if (window.location.pathname !== "/admin") {
-      window.history.pushState({}, "", "/admin");
+  useEffect(() => {
+    function handlePopState() {
+      setRoute(window.location.pathname);
     }
-  }
 
-  function userLogin() {
-    setUserLoggedIn(true);
-  }
+    window.addEventListener("popstate", handlePopState);
 
-  function adminLogin() {
-    setAdminLoggedIn(true);
-
-    if (window.location.pathname !== "/admin/dashboard") {
-      window.history.pushState(
-        {},
-        "",
-        "/admin/dashboard"
+    return () =>
+      window.removeEventListener(
+        "popstate",
+        handlePopState
       );
-    }
-  }
+  }, []);
 
-  if (splash && !isAdminRoute) {
-    return <Splash onFinish={finishSplash} />;
-  }
+  const isAdminRoute = route.startsWith("/admin");
 
   if (isAdminRoute) {
     if (!adminLoggedIn) {
-      return <AdminLogin onLogin={adminLogin} />;
+      return (
+        <LandingScreen
+          onUserLogin={() => {
+            setUserLoggedIn(true);
+            setRoute("/");
+            window.history.pushState({}, "", "/");
+          }}
+          onAdminLogin={() => {
+            setAdminLoggedIn(true);
+          }}
+        />
+      );
     }
 
-    return <AdminApp onLogout={adminLogout} />;
+    return (
+      <AdminApp
+        onLogout={() => {
+          setAdminLoggedIn(false);
+          setRoute("/");
+          window.history.pushState({}, "", "/");
+        }}
+      />
+    );
   }
 
   if (!userLoggedIn) {
-    return <Landing onLogin={userLogin} />;
+    return (
+      <LandingScreen
+        onUserLogin={() => {
+          setUserLoggedIn(true);
+        }}
+        onAdminLogin={() => {
+          setAdminLoggedIn(true);
+          setRoute("/admin");
+          window.history.pushState({}, "", "/admin");
+        }}
+      />
+    );
   }
 
-  return <UserApp onLogout={userLogout} />;
+  return (
+    <UserApp
+      onLogout={() => {
+        setUserLoggedIn(false);
+      }}
+    />
+  );
 }
 
 createRoot(document.getElementById("root")).render(
